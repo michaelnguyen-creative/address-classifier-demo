@@ -1,0 +1,31 @@
+# Vietnamese Address Classifier Requirements
+
+# Core dependencies (minimal for competition constraints)
+# No ML/NLP libraries allowed per competition rules
+
+# Standard library only approach - no external dependencies for core algorithm
+# Development and testing dependencies only:
+
+# Development Tools
+pytest>=7.0.0          # Testing framework
+pytest-cov>=4.0.0      # Test coverage reporting  
+black>=22.0.0          # Code formatting
+flake8>=4.0.0          # Code linting
+mypy>=0.950            # Type checking
+
+# Development Utilities (not used in final submission)
+pyyaml>=6.0            # Configuration file parsing
+numpy>=1.21.0          # Numerical operations for analysis only
+pandas>=1.4.0          # Data analysis during development only
+
+# Performance Analysis (development only)
+memory-profiler>=0.60.0  # Memory usage profiling
+line-profiler>=3.5.0     # Line-by-line profiling
+
+# Documentation Generation (optional)
+sphinx>=4.5.0            # Documentation generation
+sphinx-rtd-theme>=1.0.0  # Documentation theme
+
+# Note: Final submission will use ONLY Python standard library
+# All above dependencies are for development/testing only
+# Competition submission must be self-contained with no external dependencies
