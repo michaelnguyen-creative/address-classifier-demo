@@ -30,10 +30,10 @@ Phase 1: POC (Days 1-7)        Phase 2: MVP (Days 8-14)       Phase 3: Productio
 ```python
 # Simplified POC Architecture - Focus on Core Validation
 class POCAddressClassifier:
-    \"\"\"
+    """
     Minimal viable implementation to validate approach
     Priority: Prove it works, not optimize it
-    \"\"\"
+    """
     def __init__(self):
         self.normalizer = BasicVietnameseNormalizer()
         self.exact_matcher = SimpleLookupTable() 
@@ -45,18 +45,18 @@ class POCAddressClassifier:
         normalized = self.normalizer.normalize(text)
         exact_result = self.exact_matcher.lookup(normalized)
         if exact_result:
-            return {\"result\": exact_result, \"confidence\": 0.9, \"method\": \"exact\"}
+            return {"result": exact_result, "confidence": 0.9, "method": "exact"}
             
         # Tier 2: Try pattern-based parsing (prove hierarchy works)
         segments = self.pattern_parser.extract_segments(text)
         if segments:
             result = self.geographic_db.resolve_hierarchy(segments)
             if result:
-                return {\"result\": result, \"confidence\": 0.7, \"method\": \"pattern\"}
+                return {"result": result, "confidence": 0.7, "method": "pattern"}
         
         # Tier 3: Simple fuzzy fallback (prove we can handle noise)
         fuzzy_result = self.simple_fuzzy_match(text)
-        return {\"result\": fuzzy_result, \"confidence\": 0.5, \"method\": \"fuzzy\"}
+        return {"result": fuzzy_result, "confidence": 0.5, "method": "fuzzy"}
 ```
 
 ### 1.3 Daily Development Plan
@@ -79,8 +79,8 @@ class POCAddressClassifier:
 ```python
 # Day 1 - Data Analysis POC
 def analyze_training_data():
-    \"\"\"Basic data exploration and quality assessment\"\"\"
-    data = load_training_data(\"data/raw/all_raw.json\")
+    """Basic data exploration and quality assessment"""
+    data = load_training_data("data/raw/all_raw.json")
     
     # Pattern analysis
     patterns = analyze_address_patterns(data)
@@ -88,10 +88,10 @@ def analyze_training_data():
     hierarchy_validation = validate_geographic_hierarchy(data)
     
     return {
-        \"total_samples\": len(data),
-        \"common_patterns\": patterns,
-        \"noise_patterns\": noise_analysis,
-        \"data_quality_score\": calculate_data_quality(data)
+        "total_samples": len(data),
+        "common_patterns": patterns,
+        "noise_patterns": noise_analysis,
+        "data_quality_score": calculate_data_quality(data)
     }
 ```
 
@@ -113,15 +113,15 @@ def analyze_training_data():
 ```python
 class VietnameseNormalizer:
     def normalize(self, text: str) -> str:
-        \"\"\"
+        """
         POC Vietnamese text normalization
         Target: Handle 80% of OCR noise patterns
-        \"\"\"
+        """
         # Remove diacritics: á→a, ô→o, ư→u, etc.
         text = self.remove_diacritics(text)
         
         # Normalize whitespace and punctuation
-        text = re.sub(r'[.,\\-\\s]+', ' ', text.lower()).strip()
+        text = re.sub(r'[.,-s]+', ' ', text.lower()).strip()
         
         # Handle common OCR character confusions
         text = self.apply_ocr_corrections(text)
@@ -147,26 +147,26 @@ class VietnameseNormalizer:
 ```python
 class PatternParser:
     def extract_segments(self, text: str) -> dict:
-        \"\"\"
+        """
         POC administrative segment extraction
         Target: Parse 80% of standard format addresses
-        \"\"\"
-        segments = {\"province\": None, \"district\": None, \"ward\": None}
+        """
+        segments = {"province": None, "district": None, "ward": None}
         
         # Extract province patterns: T./Tỉnh/TP.
-        province_match = re.search(r'(?:t\\.|tinh|tp\\.)\\s*([^,]+)', text, re.I)
+        province_match = re.search(r'(?:t.|tinh|tp.)s*([^,]+)', text, re.I)
         if province_match:
-            segments[\"province\"] = province_match.group(1).strip()
+            segments["province"] = province_match.group(1).strip()
             
         # Extract district patterns: H./Huyện/Q./Quận
-        district_match = re.search(r'(?:h\\.|huyen|q\\.|quan)\\s*([^,]+)', text, re.I)
+        district_match = re.search(r'(?:h.|huyen|q.|quan)s*([^,]+)', text, re.I)
         if district_match:
-            segments[\"district\"] = district_match.group(1).strip()
+            segments["district"] = district_match.group(1).strip()
             
         # Extract ward patterns: X./Xã/P./Phường  
-        ward_match = re.search(r'(?:x\\.|xa|p\\.|phuong)\\s*([^,]+)', text, re.I)
+        ward_match = re.search(r'(?:x.|xa|p.|phuong)s*([^,]+)', text, re.I)
         if ward_match:
-            segments[\"ward\"] = ward_match.group(1).strip()
+            segments["ward"] = ward_match.group(1).strip()
             
         return segments
 ```
@@ -194,12 +194,12 @@ class GeographicConstraintDB:
         self.valid_combinations = self._precompute_valid_combinations()
         
     def is_valid_combination(self, province: str, district: str, ward: str) -> bool:
-        \"\"\"
+        """
         POC geographic validation
         Target: 100% accuracy, <1ms validation time
-        \"\"\"
+        """
         # Quick lookup in precomputed valid combinations
-        key = f\"{province}|{district}|{ward}\".lower()
+        key = f"{province}|{district}|{ward}".lower()
         return key in self.valid_combinations
 ```
 
@@ -224,17 +224,17 @@ class ExactMatcher:
         self.exact_lookups = self._build_lookup_table(training_data)
         
     def lookup(self, normalized_text: str) -> Optional[dict]:
-        \"\"\"
+        """
         POC exact matching
         Target: Handle 50% of cases with >95% accuracy
-        \"\"\"
+        """
         # Direct lookup in precomputed table
         result = self.exact_lookups.get(normalized_text)
         if result:
             return {
-                \"province\": result[\"province\"],
-                \"district\": result[\"district\"], 
-                \"ward\": result[\"ward\"]
+                "province": result["province"],
+                "district": result["district"], 
+                "ward": result["ward"]
             }
         return None
 ```
@@ -257,10 +257,10 @@ class ExactMatcher:
 ```python
 class SimpleFuzzyMatcher:
     def fuzzy_match(self, text: str, max_edits: int = 2) -> Optional[dict]:
-        \"\"\"
+        """
         POC fuzzy matching with performance constraints
         Target: Handle remaining 30% of cases reasonably
-        \"\"\"
+        """
         normalized = self.normalizer.normalize(text)
         
         # Try fuzzy matching against known locations
@@ -375,10 +375,10 @@ class SimpleFuzzyMatcher:
 ```python
 # MVP Architecture - Production Quality Implementation
 class MVPAddressClassifier:
-    \"\"\"
+    """
     Production-ready implementation optimized for competition
     Priority: Meet all requirements with safety margins
-    \"\"\"
+    """
     def __init__(self):
         # Enhanced components from POC learnings
         self.normalizer = OptimizedVietnameseNormalizer()
@@ -392,15 +392,15 @@ class MVPAddressClassifier:
     def classify(self, text: str) -> dict:
         # Tier 1: High-performance exact matching (60% cases, <1ms)
         if result := self.exact_cache.lookup(text):
-            return self.format_result(result, method=\"exact\", confidence=0.95)
+            return self.format_result(result, method="exact", confidence=0.95)
             
         # Tier 2: Optimized hierarchical matching (30% cases, <5ms)  
         if result := self.hierarchical_matcher.match_with_constraints(text):
-            return self.format_result(result, method=\"hierarchical\", confidence=0.85)
+            return self.format_result(result, method="hierarchical", confidence=0.85)
             
         # Tier 3: Performance-bounded fuzzy matching (10% cases, <10ms)
         if result := self.fuzzy_engine.match_with_timeout(text, timeout_ms=10):
-            return self.format_result(result, method=\"fuzzy\", confidence=0.70)
+            return self.format_result(result, method="fuzzy", confidence=0.70)
             
         # Fallback: Partial results with low confidence
         return self.handle_classification_failure(text)
@@ -480,37 +480,37 @@ class MVPAddressClassifier:
 
 ```python
 team_integration_plan = {
-    \"day_8_integration\": {
-        \"new_team_member\": \"Performance Optimization Specialist\",
-        \"handoff_package\": [
-            \"Complete POC codebase with documentation\",
-            \"Performance benchmarking results and bottlenecks\",
-            \"Optimization opportunities and implementation plan\", 
-            \"Testing framework and performance monitoring tools\"
+    "day_8_integration": {
+        "new_team_member": "Performance Optimization Specialist",
+        "handoff_package": [
+            "Complete POC codebase with documentation",
+            "Performance benchmarking results and bottlenecks",
+            "Optimization opportunities and implementation plan", 
+            "Testing framework and performance monitoring tools"
         ],
-        \"success_criteria\": \"Team member productive within 4 hours\"
+        "success_criteria": "Team member productive within 4 hours"
     },
     
-    \"day_10_integration\": {
-        \"new_team_member\": \"Advanced Algorithm Specialist\", 
-        \"handoff_package\": [
-            \"Accuracy analysis and improvement opportunities\",
-            \"Fuzzy matching requirements and constraints\",
-            \"Business rule specifications and validation framework\",
-            \"Error pattern analysis and targeted improvement areas\"
+    "day_10_integration": {
+        "new_team_member": "Advanced Algorithm Specialist", 
+        "handoff_package": [
+            "Accuracy analysis and improvement opportunities",
+            "Fuzzy matching requirements and constraints",
+            "Business rule specifications and validation framework",
+            "Error pattern analysis and targeted improvement areas"
         ],
-        \"success_criteria\": \"Team member contributing to accuracy improvements\"
+        "success_criteria": "Team member contributing to accuracy improvements"
     },
     
-    \"day_12_integration\": {
-        \"new_team_member\": \"Quality Assurance & Testing Specialist\",
-        \"handoff_package\": [
-            \"Complete system architecture and component interfaces\", 
-            \"Edge case analysis and handling requirements\",
-            \"Testing framework and validation procedures\",
-            \"Business requirements and acceptance criteria\"
+    "day_12_integration": {
+        "new_team_member": "Quality Assurance & Testing Specialist",
+        "handoff_package": [
+            "Complete system architecture and component interfaces", 
+            "Edge case analysis and handling requirements",
+            "Testing framework and validation procedures",
+            "Business requirements and acceptance criteria"
         ],
-        \"success_criteria\": \"Comprehensive testing coverage and quality validation\"
+        "success_criteria": "Comprehensive testing coverage and quality validation"
     }
 }
 ```
@@ -521,44 +521,44 @@ team_integration_plan = {
 
 ```python
 mvp_quality_gates = {
-    \"day_8_checkpoint\": {
-        \"focus\": \"Performance optimization progress\",
-        \"success_criteria\": [
-            \"Average processing time improvement >50% from POC\",
-            \"No performance regressions in accuracy\",
-            \"Team integration successful, member productive\"
+    "day_8_checkpoint": {
+        "focus": "Performance optimization progress",
+        "success_criteria": [
+            "Average processing time improvement >50% from POC",
+            "No performance regressions in accuracy",
+            "Team integration successful, member productive"
         ],
-        \"failure_action\": \"Revert to simpler optimization strategy\"
+        "failure_action": "Revert to simpler optimization strategy"
     },
     
-    \"day_10_checkpoint\": {
-        \"focus\": \"Accuracy improvement validation\",
-        \"success_criteria\": [
-            \"Accuracy improved >10% from POC baseline\", 
-            \"Clear path to 85% accuracy target\",
-            \"Performance still within requirements\"
+    "day_10_checkpoint": {
+        "focus": "Accuracy improvement validation",
+        "success_criteria": [
+            "Accuracy improved >10% from POC baseline", 
+            "Clear path to 85% accuracy target",
+            "Performance still within requirements"
         ],
-        \"failure_action\": \"Focus on data quality and simpler algorithms\"
+        "failure_action": "Focus on data quality and simpler algorithms"
     },
     
-    \"day_12_checkpoint\": {
-        \"focus\": \"System robustness and business rules\",
-        \"success_criteria\": [
-            \"No system crashes on edge cases\",
-            \"All business rules implemented and validated\",
-            \"Error handling comprehensive and meaningful\"
+    "day_12_checkpoint": {
+        "focus": "System robustness and business rules",
+        "success_criteria": [
+            "No system crashes on edge cases",
+            "All business rules implemented and validated",
+            "Error handling comprehensive and meaningful"
         ],
-        \"failure_action\": \"Simplify edge case handling, focus on core functionality\"
+        "failure_action": "Simplify edge case handling, focus on core functionality"
     },
     
-    \"day_14_checkpoint\": {
-        \"focus\": \"MVP readiness for production\",
-        \"success_criteria\": [
-            \"All competition requirements met with safety margin\",
-            \"System stable and reliable under testing\",
-            \"Team coordinated and ready for final phase\"
+    "day_14_checkpoint": {
+        "focus": "MVP readiness for production",
+        "success_criteria": [
+            "All competition requirements met with safety margin",
+            "System stable and reliable under testing",
+            "Team coordinated and ready for final phase"
         ],
-        \"failure_action\": \"Identify and resolve critical issues before production phase\"
+        "failure_action": "Identify and resolve critical issues before production phase"
     }
 }
 ```
@@ -583,10 +583,10 @@ mvp_quality_gates = {
 ```python
 # Production Architecture - Competition-Winning Implementation  
 class ProductionAddressClassifier:
-    \"\"\"
+    """
     Competition-optimized implementation with all enhancements
     Priority: Exceed requirements, maximize competitive advantage
-    \"\"\"
+    """
     def __init__(self):
         # Production-grade components
         self.advanced_normalizer = ProductionVietnameseNormalizer()
@@ -599,7 +599,7 @@ class ProductionAddressClassifier:
         
     @performance_optimizer.adaptive_optimization
     def classify(self, text: str) -> dict:
-        \"\"\"Production classification with adaptive optimization\"\"\"
+        """Production classification with adaptive optimization"""
         
         # Advanced preprocessing with input analysis
         processed_input = self.advanced_normalizer.intelligent_normalize(text)
@@ -607,10 +607,10 @@ class ProductionAddressClassifier:
         # Multi-tier matching with adaptive routing
         routing_decision = self.intelligent_cache.analyze_input_complexity(processed_input)
         
-        if routing_decision == \"exact\":
+        if routing_decision == "exact":
             result = self.intelligent_cache.advanced_lookup(processed_input)
             confidence = 0.98
-        elif routing_decision == \"hierarchical\":
+        elif routing_decision == "hierarchical":
             result = self.optimized_matcher.advanced_hierarchical_match(processed_input)
             confidence = self.confidence_engine.calculate_hierarchical_confidence(result)
         else:  # fuzzy routing
@@ -703,7 +703,7 @@ class ProductionTestFramework:
         self.business_rule_tests = BusinessRuleTestSuite()
         
     def run_complete_validation(self) -> dict:
-        \"\"\"Comprehensive validation for production readiness\"\"\"
+        """Comprehensive validation for production readiness"""
         results = {}
         
         # Unit testing (>95% coverage)
@@ -744,32 +744,32 @@ class ProductionTestFramework:
 
 ```python
 competitive_advantage_framework = {
-    \"performance_advantage\": {
-        \"our_target\": \"<0.005s average processing time\",
-        \"expected_competition\": \"0.01-0.05s average\",
-        \"advantage_factor\": \"2-10x faster than competition\",
-        \"business_impact\": \"Significant competitive edge\"
+    "performance_advantage": {
+        "our_target": "<0.005s average processing time",
+        "expected_competition": "0.01-0.05s average",
+        "advantage_factor": "2-10x faster than competition",
+        "business_impact": "Significant competitive edge"
     },
     
-    \"accuracy_advantage\": {
-        \"our_target\": \">90% accuracy\",
-        \"expected_competition\": \"75-85% accuracy\", 
-        \"advantage_factor\": \"5-15% accuracy improvement\",
-        \"business_impact\": \"Higher ranking probability\"
+    "accuracy_advantage": {
+        "our_target": ">90% accuracy",
+        "expected_competition": "75-85% accuracy", 
+        "advantage_factor": "5-15% accuracy improvement",
+        "business_impact": "Higher ranking probability"
     },
     
-    \"robustness_advantage\": {
-        \"our_approach\": \"Comprehensive business rule validation + graceful degradation\",
-        \"expected_competition\": \"Basic string matching with limited error handling\",
-        \"advantage_factor\": \"Superior reliability and edge case handling\",
-        \"business_impact\": \"More professional, production-ready solution\"
+    "robustness_advantage": {
+        "our_approach": "Comprehensive business rule validation + graceful degradation",
+        "expected_competition": "Basic string matching with limited error handling",
+        "advantage_factor": "Superior reliability and edge case handling",
+        "business_impact": "More professional, production-ready solution"
     },
     
-    \"domain_knowledge_advantage\": {
-        \"our_approach\": \"Deep Vietnamese address system understanding\",
-        \"expected_competition\": \"Generic string matching approaches\",
-        \"advantage_factor\": \"Domain-optimized algorithms and business rules\",
-        \"business_impact\": \"Fundamentally better approach to the problem\"
+    "domain_knowledge_advantage": {
+        "our_approach": "Deep Vietnamese address system understanding",
+        "expected_competition": "Generic string matching approaches",
+        "advantage_factor": "Domain-optimized algorithms and business rules",
+        "business_impact": "Fundamentally better approach to the problem"
     }
 }
 ```
@@ -780,32 +780,32 @@ competitive_advantage_framework = {
 
 ```python
 project_success_metrics = {
-    \"technical_kpis\": {
-        \"accuracy_progression\": {
-            \"poc_target\": 0.70,
-            \"mvp_target\": 0.85, 
-            \"production_target\": 0.90,
-            \"measurement\": \"Validation set accuracy\"
+    "technical_kpis": {
+        "accuracy_progression": {
+            "poc_target": 0.70,
+            "mvp_target": 0.85, 
+            "production_target": 0.90,
+            "measurement": "Validation set accuracy"
         },
-        \"performance_progression\": {
-            \"poc_target\": 0.05,   # 50ms average
-            \"mvp_target\": 0.01,   # 10ms average  
-            \"production_target\": 0.005,  # 5ms average
-            \"measurement\": \"Processing time seconds\"
+        "performance_progression": {
+            "poc_target": 0.05,   # 50ms average
+            "mvp_target": 0.01,   # 10ms average  
+            "production_target": 0.005,  # 5ms average
+            "measurement": "Processing time seconds"
         },
-        \"reliability_progression\": {
-            \"poc_target\": 0.90,   # 90% successful classifications
-            \"mvp_target\": 0.95,   # 95% successful classifications
-            \"production_target\": 0.99,  # 99% successful classifications  
-            \"measurement\": \"Success rate on diverse inputs\"
+        "reliability_progression": {
+            "poc_target": 0.90,   # 90% successful classifications
+            "mvp_target": 0.95,   # 95% successful classifications
+            "production_target": 0.99,  # 99% successful classifications  
+            "measurement": "Success rate on diverse inputs"
         }
     },
     
-    \"business_kpis\": {
-        \"team_coordination\": \"Successful integration of team members with productive contributions\",
-        \"documentation_quality\": \"Professional-grade documentation ready for submission\",
-        \"competitive_position\": \"Solution clearly differentiated from expected competition\",
-        \"submission_readiness\": \"Complete, tested submission package ready for competition\"
+    "business_kpis": {
+        "team_coordination": "Successful integration of team members with productive contributions",
+        "documentation_quality": "Professional-grade documentation ready for submission",
+        "competitive_position": "Solution clearly differentiated from expected competition",
+        "submission_readiness": "Complete, tested submission package ready for competition"
     }
 }
 ```
@@ -814,28 +814,28 @@ project_success_metrics = {
 
 ```python
 cross_phase_risk_monitoring = {
-    \"performance_risk\": {
-        \"early_indicators\": [\"POC >0.03s\", \"MVP >0.015s\", \"Production >0.008s\"],
-        \"mitigation_triggers\": \"Activate fallback algorithms\",
-        \"escalation_path\": \"Simplify approach, ensure basic requirements met\"
+    "performance_risk": {
+        "early_indicators": ["POC >0.03s", "MVP >0.015s", "Production >0.008s"],
+        "mitigation_triggers": "Activate fallback algorithms",
+        "escalation_path": "Simplify approach, ensure basic requirements met"
     },
     
-    \"accuracy_risk\": {
-        \"early_indicators\": [\"POC <65%\", \"MVP <80%\", \"Production <87%\"],
-        \"mitigation_triggers\": \"Deep dive error analysis, algorithm tuning\",
-        \"escalation_path\": \"Ensemble methods, extended validation\"
+    "accuracy_risk": {
+        "early_indicators": ["POC <65%", "MVP <80%", "Production <87%"],
+        "mitigation_triggers": "Deep dive error analysis, algorithm tuning",
+        "escalation_path": "Ensemble methods, extended validation"
     },
     
-    \"integration_risk\": {
-        \"early_indicators\": [\"Team member productivity <expected\", \"Integration conflicts\"],
-        \"mitigation_triggers\": \"Additional mentoring, clearer interfaces\",
-        \"escalation_path\": \"Reduce scope, focus on core contributions\"
+    "integration_risk": {
+        "early_indicators": ["Team member productivity <expected", "Integration conflicts"],
+        "mitigation_triggers": "Additional mentoring, clearer interfaces",
+        "escalation_path": "Reduce scope, focus on core contributions"
     },
     
-    \"timeline_risk\": {
-        \"early_indicators\": [\"Phase delays >1 day\", \"Quality gate failures\"],
-        \"mitigation_triggers\": \"Resource reallocation, scope reduction\",
-        \"escalation_path\": \"Focus on minimum viable requirements, ensure submission readiness\"
+    "timeline_risk": {
+        "early_indicators": ["Phase delays >1 day", "Quality gate failures"],
+        "mitigation_triggers": "Resource reallocation, scope reduction",
+        "escalation_path": "Focus on minimum viable requirements, ensure submission readiness"
     }
 }
 ```
