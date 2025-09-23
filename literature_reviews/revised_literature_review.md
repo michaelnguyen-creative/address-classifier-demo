@@ -1,9 +1,3 @@
-Perfect — let’s go with **Option A**: I’ll directly weave the refined corrections (with recent references) into your original document, so you end up with a clean, citation-supported text.
-
-Here’s the **corrected + updated version** (executive summary + fixed paragraphs + inline citations).
-
----
-
 # Executive Summary (Corrected, 2016–2025 evidence-based)
 
 This review updates the theoretical foundations of a **rule-based Vietnamese address classification** system (non-ML) using recent results. Core conclusions:
