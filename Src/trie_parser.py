@@ -9,6 +9,7 @@ FIX: Proper Vietnamese character normalization with explicit mapping
 """
 
 from typing import List, Tuple, Optional, Dict
+import string
 
 
 # ========================================================================
@@ -80,7 +81,13 @@ def normalize_text(text: str) -> str:
         result.append(VIETNAMESE_CHAR_MAP.get(char, char))
     text = ''.join(result)
     
-    # Step 3: Clean whitespace
+    # Step 3: Remove punctuation EXCEPT hyphens
+    # string.punctuation = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'
+    # We keep '-' for compound names like "Thủ-Đức"
+    punctuation_to_remove = string.punctuation.replace('-', '')
+    text = text.translate(str.maketrans('', '', punctuation_to_remove))
+
+    # Step 4: Clean whitespace
     text = text.strip()
     text = ' '.join(text.split())
     
@@ -126,6 +133,7 @@ class Trie:
         self.root = TrieNode()
     
     def insert(self, normalized_word: str, original_value: str):
+        print(f"🔍 INSERT: '{normalized_word}' → '{original_value}'")
         """
         Insert a word into the trie
         
@@ -189,7 +197,9 @@ class Trie:
         Effective: O(n) linear scan
         """
         matches = []
+        print(f"🔍 SEARCH: Looking in text = '{text}'")
         tokens = text.split()
+        print(f"🔍 SEARCH: Tokens = {tokens}")
         n = len(tokens)
         
         # Try starting from each position
@@ -204,6 +214,7 @@ class Trie:
                 if result:
                     matches.append((result, i, j))
         
+        print(f"🔍 SEARCH: Found {len(matches)} matches")
         return matches
 
 
