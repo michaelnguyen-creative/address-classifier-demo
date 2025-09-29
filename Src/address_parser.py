@@ -13,12 +13,13 @@ Algorithm:
 - Return best result with confidence score
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
 # Import from our modules
 from address_database import AddressDatabase
 from trie_parser import normalize_text, Trie
+from lcs_matcher import LCSMatcher  # NEW import
 
 
 @dataclass
@@ -66,6 +67,11 @@ class AddressParser:
         self.db = AddressDatabase(data_dir=data_dir)
         
         print("✓ Parser ready (Trie + validation)")
+
+        # NEW: Initialize LCS matcher
+        self.lcs_matcher = LCSMatcher(threshold=0.4)
+        
+        print("✓ Parser ready (Trie + LCS + validation)")
     
     # ========================================================================
     # MAIN PARSING INTERFACE
@@ -116,11 +122,18 @@ class AddressParser:
         if debug:
             print("✗ Trie match failed")
         
-        # ===== TIER 2: LCS ALIGNMENT (FUTURE) =====
-        # TODO: Implement LCS fallback for fuzzy matching
+        # ===== TIER 2: LCS ALIGNMENT =====  # ← NEW!
+        if debug:
+            print("\n[TIER 2] Falling back to LCS...")
         
-        # ===== TIER 3: EDIT DISTANCE (FUTURE) =====
-        # TODO: Implement edit distance for typos
+        lcs_result = self._try_lcs_match(input_tokens, trie_result, debug)
+        
+        if self._is_valid_result(lcs_result, debug):
+            lcs_result.match_method = "lcs"
+            # Confidence based on how complete the result is
+            lcs_result.confidence = 0.7 if lcs_result.ward else \
+                                0.6 if lcs_result.district else 0.5
+            return lcs_result
         
         if debug:
             print("\n✗ All tiers failed - returning empty result")
@@ -284,42 +297,208 @@ class AddressParser:
         """
         Check if parse result is valid
         
-        Valid if:
-        1. Has at least province
-        2. Hierarchy is consistent (codes match)
+        NEW STRATEGY: Graceful degradation
+        - Accept partial matches (province only, province+district, etc.)
+        - Clear invalid components but keep valid ones
         
-        Args:
-            result: ParsedAddress to validate
-            debug: Print validation details
-        
-        Returns:
-            True if valid, False otherwise
+        Valid if: Has at least province with valid hierarchy
         """
         if not result or not result.province:
             if debug:
                 print("  ✗ Invalid: No province found")
             return False
         
-        # If we have codes, hierarchy is already validated
-        # (codes are only assigned if hierarchy is valid)
+        # Province is required and must be valid
+        if not result.province_code:
+            if debug:
+                print(f"  ✗ Invalid: Province '{result.province}' not found in database")
+            return False
         
-        # Additional check: If we have district, must have valid code
+        # If we have a district, it must be valid - otherwise CLEAR it
         if result.district and not result.district_code:
             if debug:
-                print(f"  ✗ Invalid: District '{result.district}' not in province '{result.province}'")
-            return False
+                print(f"  ⚠ Warning: District '{result.district}' not in province '{result.province}' - clearing")
+            result.district = None
+            result.district_code = None
         
-        # If we have ward, must have valid code
+        # If we have a ward, it must be valid - otherwise CLEAR it
         if result.ward and not result.ward_code:
             if debug:
-                print(f"  ✗ Invalid: Ward '{result.ward}' not in district '{result.district}'")
-            return False
+                print(f"  ⚠ Warning: Ward '{result.ward}' not in district '{result.district}' - clearing")
+            result.ward = None
+            result.ward_code = None
         
+        # At this point, whatever remains is valid
         result.valid = True
+        
         if debug:
-            print(f"  ✓ Valid result")
+            print(f"  ✓ Valid result (Province: {result.province}, "
+                f"District: {result.district or 'N/A'}, "
+                f"Ward: {result.ward or 'N/A'})")
         
         return True
+    
+    def _try_lcs_match(
+        self, 
+        input_tokens: List[str],
+        trie_result: ParsedAddress,
+        debug: bool = False
+    ) -> ParsedAddress:
+        """
+        Try LCS matching with hierarchical constraints
+        
+        Strategy:
+        1. Determine what Trie found (province/district/ward)
+        2. Use LCS to fill in missing pieces
+        3. Constrain search based on what we already know
+        
+        Args:
+            input_tokens: Tokenized input text
+            trie_result: Result from Trie matching (may be partial)
+            debug: Print debug info
+        
+        Returns:
+            ParsedAddress with LCS matches filled in
+        """
+        if debug:
+            print("\n[TIER 2] Trying LCS matching...")
+            print(f"  Trie gave us: P={trie_result.province}, "
+                f"D={trie_result.district}, W={trie_result.ward}")
+        
+        # Start with what Trie found
+        result = ParsedAddress(
+            province=trie_result.province,
+            district=trie_result.district,
+            ward=trie_result.ward
+        )
+        
+        # ===== CASE 1: No province found → Search all levels =====
+        if not result.province:
+            if debug:
+                print("  Case 1: No province → searching all levels")
+            
+            # Search province
+            province_match = self.lcs_matcher.find_best_match(
+                input_tokens,
+                self.db.province_candidates,
+                "province"
+            )
+            
+            if province_match:
+                result.province = province_match.entity_name
+                if debug:
+                    print(f"    Province LCS: {result.province} "
+                        f"(score={province_match.similarity_score:.2f})")
+            
+            # If we found province via LCS, now search district constrained
+            if result.province:
+                district_candidates = self.db.get_districts_in_province(result.province)
+                district_match = self.lcs_matcher.find_best_match(
+                    input_tokens,
+                    district_candidates,
+                    "district"
+                )
+                
+                if district_match:
+                    result.district = district_match.entity_name
+                    if debug:
+                        print(f"    District LCS: {result.district} "
+                            f"(score={district_match.similarity_score:.2f})")
+            
+            # If we have province + district, search ward
+            if result.province and result.district:
+                ward_candidates = self.db.get_wards_in_district(
+                    result.district,
+                    result.province
+                )
+                ward_match = self.lcs_matcher.find_best_match(
+                    input_tokens,
+                    ward_candidates,
+                    "ward"
+                )
+                
+                if ward_match:
+                    result.ward = ward_match.entity_name
+                    if debug:
+                        print(f"    Ward LCS: {result.ward} "
+                            f"(score={ward_match.similarity_score:.2f})")
+        
+        # ===== CASE 2: Has province but no district → Search district/ward =====
+        elif result.province and not result.district:
+            if debug:
+                print(f"  Case 2: Has province '{result.province}' → "
+                    f"searching district/ward")
+            
+            # Search district within province
+            district_candidates = self.db.get_districts_in_province(result.province)
+            district_match = self.lcs_matcher.find_best_match(
+                input_tokens,
+                district_candidates,
+                "district"
+            )
+            
+            if district_match:
+                result.district = district_match.entity_name
+                if debug:
+                    print(f"    District LCS: {result.district} "
+                        f"(score={district_match.similarity_score:.2f})")
+                
+                # Now search ward within district
+                ward_candidates = self.db.get_wards_in_district(
+                    result.district,
+                    result.province
+                )
+                ward_match = self.lcs_matcher.find_best_match(
+                    input_tokens,
+                    ward_candidates,
+                    "ward"
+                )
+                
+                if ward_match:
+                    result.ward = ward_match.entity_name
+                    if debug:
+                        print(f"    Ward LCS: {result.ward} "
+                            f"(score={ward_match.similarity_score:.2f})")
+        
+        # ===== CASE 3: Has province + district but no ward → Search ward only =====
+        elif result.province and result.district and not result.ward:
+            if debug:
+                print(f"  Case 3: Has province + district → searching ward only")
+            
+            ward_candidates = self.db.get_wards_in_district(
+                result.district,
+                result.province
+            )
+            ward_match = self.lcs_matcher.find_best_match(
+                input_tokens,
+                ward_candidates,
+                "ward"
+            )
+            
+            if ward_match:
+                result.ward = ward_match.entity_name
+                if debug:
+                    print(f"    Ward LCS: {result.ward} "
+                        f"(score={ward_match.similarity_score:.2f})")
+        
+        # ===== Add codes for validation =====
+        if result.province:
+            result.province_code = self.db.province_name_to_code.get(result.province)
+        
+        if result.district and result.province:
+            result.district_code = self._find_valid_district_code(
+                result.district,
+                result.province
+            )
+        
+        if result.ward and result.district and result.province:
+            result.ward_code = self._find_valid_ward_code(
+                result.ward,
+                result.district,
+                result.province
+            )
+        
+        return result
 
 
 # ========================================================================
@@ -388,7 +567,7 @@ if __name__ == "__main__":
         print(f"[TEST {i}] '{text}'")
         print("-" * 70)
         
-        result = parser.parse(text, debug=False)
+        result = parser.parse(text, debug=True)
         
         print(f"  Province:   {result.province or 'N/A'}")
         print(f"  District:   {result.district or 'N/A'}")

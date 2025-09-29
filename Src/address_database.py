@@ -14,7 +14,7 @@ Design Philosophy:
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Tuple, Optional
 
 # Import Trie and normalize_text from trie_parser module
 from trie_parser import Trie, normalize_text
@@ -77,6 +77,9 @@ class AddressDatabase:
         print(f"  - {len(self.provinces)} provinces")
         print(f"  - {len(self.districts)} districts")
         print(f"  - {len(self.wards)} wards")
+
+        # NEW: Pre-tokenized candidates for LCS matching
+        self._build_lcs_candidates()
     
     # ====================================================================
     # STEP 1: LOAD JSON FILES
@@ -229,8 +232,115 @@ class AddressDatabase:
         # Ward Trie
         self.ward_trie = Trie()
         for w in self.wards:
-            normalized = normalize_text(w['Name'])
-            self.ward_trie.insert(normalized, w['Name'])
+            name = w['Name'].strip()
+            normalized = normalize_text(name)
+            self.ward_trie.insert(normalized, name)
+    
+    def _build_lcs_candidates(self):
+        """
+        Pre-tokenize all entities for LCS matching
+
+        Why: LCS needs token sequences, not raw strings
+        Cost: O(total_entities) one-time preprocessing
+        Benefit: O(1) lookup during parsing
+        """
+        print("Building LCS candidate lists...")
+
+        # Province candidates: List[(name, tokens)]
+        self.province_candidates = [
+            (name, normalize_text(name).split())
+            for name in self.province_name_to_code.keys()
+        ]
+
+        # District candidates: List[(name, tokens)]
+        self.district_candidates = [
+            (name, normalize_text(name).split())
+            for name in self.district_name_to_codes.keys()
+        ]
+
+        # Ward candidates: List[(name, tokens)]
+        self.ward_candidates = [
+            (name, normalize_text(name).split())
+            for name in self.ward_name_to_codes.keys()
+        ]
+
+        print(f"  ✓ {len(self.province_candidates)} provinces")
+        print(f"  ✓ {len(self.district_candidates)} districts")
+        print(f"  ✓ {len(self.ward_candidates)} wards")
+
+    def get_districts_in_province(self, province_name: str) -> List[Tuple[str, List[str]]]:
+        """
+        Get LCS candidates for districts within a province
+        
+        Args:
+            province_name: Province name (e.g., "Hà Nội")
+        
+        Returns:
+            List of (district_name, tokens) that belong to this province
+        """
+        province_code = self.province_name_to_code.get(province_name)
+        if not province_code:
+            return []
+        
+        # Filter district candidates by province
+        return [
+            (name, tokens)
+            for name, tokens in self.district_candidates
+            if any(
+                self.district_to_province.get(code) == province_code
+                for code in self.district_name_to_codes[name]
+            )
+        ]
+    
+    def get_wards_in_district(
+        self, 
+        district_name: str, 
+        province_name: str
+    ) -> List[Tuple[str, List[str]]]:
+        """
+        Get LCS candidates for wards within a district
+        
+        Args:
+            district_name: District name
+            province_name: Province name (for disambiguation)
+        
+        Returns:
+            List of (ward_name, tokens) that belong to this district
+        """
+        # First, get the correct district code
+        district_code = self._find_valid_district_code(district_name, province_name)
+        if not district_code:
+            return []
+        
+        # Filter ward candidates by district
+        return [
+            (name, tokens)
+            for name, tokens in self.ward_candidates
+            if any(
+                self.ward_to_district.get(code) == district_code
+                for code in self.ward_name_to_codes[name]
+            )
+        ]
+    
+    def _find_valid_district_code(
+        self, 
+        district_name: str, 
+        province_name: str
+    ) -> Optional[str]:
+        """
+        Find district code that belongs to given province
+        """
+        province_code = self.province_name_to_code.get(province_name)
+        if not province_code:
+            return None
+        
+        district_codes = self.district_name_to_codes.get(district_name, [])
+        
+        for district_code in district_codes:
+            if self.district_to_province.get(district_code) == province_code:
+                return district_code
+        
+        return None
     
     # ====================================================================
     # VALIDATION METHODS
