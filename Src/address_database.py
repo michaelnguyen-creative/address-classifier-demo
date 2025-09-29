@@ -16,85 +16,8 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-
-# ========================================================================
-# TRIE DATA STRUCTURE
-# ========================================================================
-
-class TrieNode:
-    """
-    Node in a prefix tree
-    
-    Attributes:
-        children: Dict[char → TrieNode]
-        is_end: True if this is the end of a word
-        value: Original value to return (e.g., "Hà Nội")
-    """
-    def __init__(self):
-        self.children: Dict[str, 'TrieNode'] = {}
-        self.is_end: bool = False
-        self.value: Optional[str] = None
-
-
-class Trie:
-    """
-    Prefix tree for efficient string matching
-    
-    Key Operations:
-        insert(normalized, original): O(m) - add word
-        search(normalized): O(m) - exact lookup
-        search_in_text(text): O(n×k×m) - find all occurrences
-    
-    Why Trie?
-        - Shared prefixes save space ("Hà Nội" and "Hà Nam" share "Hà")
-        - Fast matching without scanning full database
-        - Natural multi-token support (handles "Nam Từ Liêm" as single entity)
-    """
-    
-    def __init__(self):
-        self.root = TrieNode()
-    
-    def insert(self, normalized_word: str, original_value: str):
-        """
-        Insert word into Trie
-        
-        Args:
-            normalized_word: Searchable form (e.g., "ha noi")
-            original_value: Display form (e.g., "Hà Nội")
-        
-        Example:
-            trie.insert("ha noi", "Hà Nội")
-            trie.search("ha noi") → "Hà Nội"
-        
-        Time: O(m) where m = len(normalized_word)
-        """
-        node = self.root
-        
-        for char in normalized_word:
-            if char not in node.children:
-                node.children[char] = TrieNode()
-            node = node.children[char]
-        
-        node.is_end = True
-        node.value = original_value
-    
-    def search(self, normalized_word: str) -> Optional[str]:
-        """
-        Exact search for a word
-        
-        Returns:
-            Original value if found, None otherwise
-        
-        Time: O(m) where m = len(normalized_word)
-        """
-        node = self.root
-        
-        for char in normalized_word:
-            if char not in node.children:
-                return None
-            node = node.children[char]
-        
-        return node.value if node.is_end else None
+# Import Trie and normalize_text from trie_parser module
+from trie_parser import Trie, normalize_text
 
 
 # ========================================================================
@@ -272,18 +195,30 @@ class AddressDatabase:
         Process:
             1. Normalize name ("Hà Nội" → "ha noi")
             2. Insert into Trie
-            3. Store original name for display
+            3. Insert common aliases
+            4. Store original name for display
         
         Time: O(P×p + D×d + W×w) where p,d,w are avg name lengths
               Effective: O(n) where n = total character count
         """
-        from trie_parser import normalize_text
+        # Define common aliases for provinces
+        province_aliases = {
+            "Hồ Chí Minh": ["hcm", "tp hcm", "tphcm", "thanh pho ho chi minh"],
+            "Hà Nội": ["hn"],
+            "Đà Nẵng": ["dn", "da nang"],
+        }
         
         # Province Trie
         self.province_trie = Trie()
         for p in self.provinces:
-            normalized = normalize_text(p['Name'])
-            self.province_trie.insert(normalized, p['Name'])
+            name = p['Name']
+            normalized = normalize_text(name)
+            self.province_trie.insert(normalized, name)
+            
+            # Insert aliases if they exist
+            if name in province_aliases:
+                for alias in province_aliases[name]:
+                    self.province_trie.insert(alias, name)
         
         # District Trie
         self.district_trie = Trie()
@@ -315,17 +250,17 @@ class AddressDatabase:
             2. Check if ANY combination is valid using hierarchy maps
         
         Example:
-            Input: ("Tân Bình", "Tân Bình", "TP.HCM")
+            Input: ("Tân Bình", "Tân Bình", "Hồ Chí Minh")
             
             Step 1: Get codes
                 ward_codes = ["10363", "10364"]
-                district_codes = ["760"]
+                district_codes = ["766"]
                 province_code = "79"
             
             Step 2: Check combinations
                 For ward "10363":
-                    ward_to_district["10363"] == "760" ✓
-                    district_to_province["760"] == "79" ✓
+                    ward_to_district["10363"] == "766" ✓
+                    district_to_province["766"] == "79" ✓
                 → VALID
         
         Time: O(W_dup × D_dup) where W_dup, D_dup are duplicate counts

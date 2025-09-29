@@ -10,9 +10,7 @@ Features:
 """
 
 import sys
-from typing import Optional
-from address_database import AddressDatabase, AddressMatch
-from archive.address_parser import AddressParser
+from address_parser import AddressParser
 
 
 class AddressCLI:
@@ -20,9 +18,12 @@ class AddressCLI:
     
     def __init__(self):
         print("Loading address database...")
-        self.db = AddressDatabase()
-        self.parser = AddressParser(self.db)
+        # New parser builds its own database internally
+        self.parser = AddressParser(data_dir="../Data")
+        # Reference parser's database for CLI operations
+        self.db = self.parser.db
         self.running = True
+        print("✓ CLI ready")
         
     def run(self):
         """Main CLI loop"""
@@ -458,6 +459,7 @@ class AddressCLI:
             
             print(f"\n  Confidence: {result.confidence:.2%}")
             print(f"  Valid:      {'Yes' if result.valid else 'No'}")
+            print(f"  Method:     {result.match_method}")
             
             if result.valid and result.ward and result.district and result.province:
                 print(f"\n  Codes:")
@@ -492,7 +494,10 @@ class AddressCLI:
             result = self.parser.parse(text)
             parts = [p for p in [result.ward, result.district, result.province] if p]
             if parts:
-                print(f"Result: {', '.join(parts)} ({result.confidence:.0%})")
+                print(f"Result: {', '.join(parts)}")
+                print(f"  Confidence: {result.confidence:.0%}")
+                print(f"  Method: {result.match_method}")
+                print(f"  Valid: {result.valid}")
             else:
                 print("Result: No match")
 
