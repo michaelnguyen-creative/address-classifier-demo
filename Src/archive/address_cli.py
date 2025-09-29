@@ -12,7 +12,7 @@ Features:
 import sys
 from typing import Optional
 from address_database import AddressDatabase, AddressMatch
-from address_parser import AddressParser
+from archive.address_parser import AddressParser
 
 
 class AddressCLI:

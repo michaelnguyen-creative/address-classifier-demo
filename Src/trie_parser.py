@@ -133,7 +133,6 @@ class Trie:
         self.root = TrieNode()
     
     def insert(self, normalized_word: str, original_value: str):
-        print(f"🔍 INSERT: '{normalized_word}' → '{original_value}'")
         """
         Insert a word into the trie
         
@@ -197,9 +196,7 @@ class Trie:
         Effective: O(n) linear scan
         """
         matches = []
-        print(f"🔍 SEARCH: Looking in text = '{text}'")
         tokens = text.split()
-        print(f"🔍 SEARCH: Tokens = {tokens}")
         n = len(tokens)
         
         # Try starting from each position
@@ -214,7 +211,6 @@ class Trie:
                 if result:
                     matches.append((result, i, j))
         
-        print(f"🔍 SEARCH: Found {len(matches)} matches")
         return matches
 
 

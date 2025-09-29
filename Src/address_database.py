@@ -1,93 +1,175 @@
 """
-Vietnamese Address Database - Optimized Hierarchical Lookup System
+AddressDatabase - Hierarchical Vietnamese Address Storage
 
-Key Improvements:
-- O(1) lookups for all operations (was O(n) for many queries)
-- Memory-efficient duplicate handling with context
-- Comprehensive bidirectional indexing
-- Full ward-to-province traversal support
+Architecture:
+    1. Trie: Fast name matching O(m)
+    2. Hash Maps: Fast validation O(1)
+    3. Hierarchy validation using codes
+
+Design Philosophy:
+    - Tries for MATCHING (find entities in text)
+    - Hash maps for VALIDATION (check relationships)
+    - Separation of concerns = clarity
 """
 
 import json
-import unicodedata
-from typing import Dict, List, Optional, Tuple
 from pathlib import Path
-from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 
-@dataclass
-class AddressMatch:
-    """Represents a matched administrative entity with full context"""
-    ward: Optional[str] = None
-    district: Optional[str] = None
-    province: Optional[str] = None
-    ward_code: Optional[str] = None
-    district_code: Optional[str] = None
-    province_code: Optional[str] = None
+# ========================================================================
+# TRIE DATA STRUCTURE
+# ========================================================================
 
+class TrieNode:
+    """
+    Node in a prefix tree
+    
+    Attributes:
+        children: Dict[char → TrieNode]
+        is_end: True if this is the end of a word
+        value: Original value to return (e.g., "Hà Nội")
+    """
+    def __init__(self):
+        self.children: Dict[str, 'TrieNode'] = {}
+        self.is_end: bool = False
+        self.value: Optional[str] = None
+
+
+class Trie:
+    """
+    Prefix tree for efficient string matching
+    
+    Key Operations:
+        insert(normalized, original): O(m) - add word
+        search(normalized): O(m) - exact lookup
+        search_in_text(text): O(n×k×m) - find all occurrences
+    
+    Why Trie?
+        - Shared prefixes save space ("Hà Nội" and "Hà Nam" share "Hà")
+        - Fast matching without scanning full database
+        - Natural multi-token support (handles "Nam Từ Liêm" as single entity)
+    """
+    
+    def __init__(self):
+        self.root = TrieNode()
+    
+    def insert(self, normalized_word: str, original_value: str):
+        """
+        Insert word into Trie
+        
+        Args:
+            normalized_word: Searchable form (e.g., "ha noi")
+            original_value: Display form (e.g., "Hà Nội")
+        
+        Example:
+            trie.insert("ha noi", "Hà Nội")
+            trie.search("ha noi") → "Hà Nội"
+        
+        Time: O(m) where m = len(normalized_word)
+        """
+        node = self.root
+        
+        for char in normalized_word:
+            if char not in node.children:
+                node.children[char] = TrieNode()
+            node = node.children[char]
+        
+        node.is_end = True
+        node.value = original_value
+    
+    def search(self, normalized_word: str) -> Optional[str]:
+        """
+        Exact search for a word
+        
+        Returns:
+            Original value if found, None otherwise
+        
+        Time: O(m) where m = len(normalized_word)
+        """
+        node = self.root
+        
+        for char in normalized_word:
+            if char not in node.children:
+                return None
+            node = node.children[char]
+        
+        return node.value if node.is_end else None
+
+
+# ========================================================================
+# ADDRESS DATABASE
+# ========================================================================
 
 class AddressDatabase:
     """
-    Optimized Vietnamese address database with O(1) lookups
+    Vietnamese address database with fast lookup and validation
     
-    Structure:
-        Provinces (63) → Districts (696) → Wards (10,047)
+    Data Sources:
+        - Provinces.json: 63 provinces/cities
+        - Districts.json: ~700 districts
+        - Wards.json: ~11,000 wards
     
-    Performance Guarantees:
-        - All name lookups: O(1) average case
-        - Hierarchy traversal: O(1) per level
-        - Memory: O(P + D + W) with minimal duplication
+    Key Features:
+        1. Trie-based matching (fast path)
+        2. Code-based validation (handle duplicates)
+        3. Hierarchical consistency checking
+    
+    Usage:
+        db = AddressDatabase(data_dir="../Data")
+        
+        # Fast lookup
+        province = db.province_trie.search("ha noi")  # "Hà Nội"
+        
+        # Validation
+        valid = db.validate_hierarchy("Cầu Diễn", "Nam Từ Liêm", "Hà Nội")
     """
     
     def __init__(self, data_dir: str = "../Data"):
-        """Initialize and build optimized indexes"""
+        """
+        Initialize database from JSON files
         
-        # === Raw Data Storage ===
-        self.provinces: List[dict] = []
-        self.districts: List[dict] = []
-        self.wards: List[dict] = []
+        Build Process:
+        1. Load JSON → O(P + D + W)
+        2. Build hash maps → O(P + D + W)
+        3. Build Tries → O(P×p + D×d + W×w) where p,d,w are avg name lengths
         
-        # === Normalized Name → Original Name(s) ===
-        self.province_map: Dict[str, str] = {}
-        self.district_map: Dict[str, str | List[Tuple[str, str]]] = {}  # name or [(name, prov_code)]
-        self.ward_map: Dict[str, str | List[Tuple[str, str]]] = {}      # name or [(name, dist_code)]
+        Total: O(n) where n = total data size
+        """
+        print(f"Loading address database from {data_dir}...")
         
-        # === Bidirectional Code Lookups (O(1)) ===
-        self.province_by_code: Dict[str, dict] = {}
-        self.district_by_code: Dict[str, dict] = {}
-        self.ward_by_code: Dict[str, dict] = {}
-        
-        # === NEW: Name → Code Reverse Lookups ===
-        self.province_name_to_code: Dict[str, str] = {}
-        self.district_name_to_codes: Dict[str, List[str]] = {}  # Can have duplicates
-        self.ward_name_to_codes: Dict[str, List[str]] = {}      # Can have duplicates
-        
-        # === Hierarchy (Parent → Children) ===
-        self.hierarchy: Dict[str, Dict[str, List[str]]] = {}  # prov → {dist → [ward_names]}
-        
-        # === Reverse Hierarchy (Child → Parent) ===
-        self.district_to_province: Dict[str, str] = {}
-        self.ward_to_district: Dict[str, str] = {}
-        
-        # === Aliases ===
-        self.province_aliases: Dict[str, str] = {}
-        
-        # === Build Everything ===
+        # Step 1: Load raw data
         self._load_json_files(data_dir)
-        self._build_code_lookups()
-        self._build_name_lookups()
-        self._build_hierarchy()
-        self._add_aliases()
         
-        print(f"✅ Database initialized")
-        print(f"   {len(self.provinces)} provinces, {len(self.districts)} districts, {len(self.wards)} wards")
+        # Step 2: Build lookup maps (name → code)
+        self._build_lookup_maps()
+        
+        # Step 3: Build hierarchy maps (code → parent_code)
+        self._build_hierarchy_maps()
+        
+        # Step 4: Build Tries for fast matching
+        self._build_tries()
+        
+        print(f"✓ Database ready:")
+        print(f"  - {len(self.provinces)} provinces")
+        print(f"  - {len(self.districts)} districts")
+        print(f"  - {len(self.wards)} wards")
     
-    # ========================================================================
-    # CORE INDEXING - All O(P + D + W) one-time cost
-    # ========================================================================
+    # ====================================================================
+    # STEP 1: LOAD JSON FILES
+    # ====================================================================
     
     def _load_json_files(self, data_dir: str):
-        """Load JSON files - O(P + D + W)"""
+        """
+        Load JSON files into memory
+        
+        Expected Format:
+            Provinces.json: [{Code: "01", Name: "Hà Nội"}, ...]
+            Districts.json: [{Code: "001", Name: "Ba Đình", ProvinceCode: "01"}, ...]
+            Wards.json: [{Code: "00001", Name: "Phúc Xá", DistrictCode: "001"}, ...]
+        
+        Time: O(P + D + W) - single pass through all files
+        """
         base_path = Path(data_dir)
         
         with open(base_path / "Provinces.json", encoding="utf-8") as f:
@@ -99,380 +181,251 @@ class AddressDatabase:
         with open(base_path / "Wards.json", encoding="utf-8") as f:
             self.wards = json.load(f)
     
-    def _normalize(self, text: str) -> str:
+    # ====================================================================
+    # STEP 2: BUILD LOOKUP MAPS (Name → Code)
+    # ====================================================================
+    
+    def _build_lookup_maps(self):
         """
-        Normalize Vietnamese text - O(n)
+        Build hash maps for O(1) name → code lookup
         
-        Removes diacritics, lowercases, cleans whitespace
+        Why different structures for each level?
+        
+        Province: 1:1 mapping
+            "Hà Nội" → "01" (unique names)
+        
+        District: 1:many mapping
+            "Tân Bình" → ["760", "761"] (duplicates across provinces)
+        
+        Ward: 1:many mapping
+            "Tân Bình" → ["10363", "10364", ...] (many duplicates)
+        
+        Time: O(P + D + W)
         """
-        text = unicodedata.normalize('NFKD', text)
-        text = ''.join(c for c in text if not unicodedata.combining(c))
-        return ' '.join(text.lower().split())
+        # Province: Unique names → single code
+        self.province_name_to_code: Dict[str, str] = {
+            p['Name']: p['Code'] 
+            for p in self.provinces
+        }
+        
+        # District: Duplicate names → list of codes
+        self.district_name_to_codes: Dict[str, List[str]] = {}
+        for d in self.districts:
+            name = d['Name']
+            if name not in self.district_name_to_codes:
+                self.district_name_to_codes[name] = []
+            self.district_name_to_codes[name].append(d['Code'])
+        
+        # Ward: Duplicate names → list of codes
+        self.ward_name_to_codes: Dict[str, List[str]] = {}
+        for w in self.wards:
+            name = w['Name']
+            if name not in self.ward_name_to_codes:
+                self.ward_name_to_codes[name] = []
+            self.ward_name_to_codes[name].append(w['Code'])
     
-    def _build_code_lookups(self):
-        """Build code-based indexes - O(P + D + W)"""
-        
-        for prov in self.provinces:
-            self.province_by_code[prov["Code"]] = prov
-            self.province_name_to_code[prov["Name"]] = prov["Code"]
-        
-        for dist in self.districts:
-            self.district_by_code[dist["Code"]] = dist
-            self.district_to_province[dist["Code"]] = dist["ProvinceCode"]
-            
-            # Handle duplicate district names
-            if dist["Name"] not in self.district_name_to_codes:
-                self.district_name_to_codes[dist["Name"]] = []
-            self.district_name_to_codes[dist["Name"]].append(dist["Code"])
-        
-        for ward in self.wards:
-            self.ward_by_code[ward["Code"]] = ward
-            self.ward_to_district[ward["Code"]] = ward["DistrictCode"]
-            
-            # Handle duplicate ward names
-            if ward["Name"] not in self.ward_name_to_codes:
-                self.ward_name_to_codes[ward["Name"]] = []
-            self.ward_name_to_codes[ward["Name"]].append(ward["Code"])
+    # ====================================================================
+    # STEP 3: BUILD HIERARCHY MAPS (Code → Parent Code)
+    # ====================================================================
     
-    def _build_name_lookups(self):
-        """Build normalized name indexes - O(P + D + W)"""
-        
-        # Provinces (always unique)
-        for prov in self.provinces:
-            normalized = self._normalize(prov["Name"])
-            self.province_map[normalized] = prov["Name"]
-        
-        # Districts (store with province context for duplicates)
-        for dist in self.districts:
-            normalized = self._normalize(dist["Name"])
-            
-            if normalized not in self.district_map:
-                # First occurrence - store as string
-                self.district_map[normalized] = dist["Name"]
-            else:
-                # Duplicate detected - upgrade to list with context
-                if isinstance(self.district_map[normalized], str):
-                    # Convert first entry
-                    first_name = self.district_map[normalized]
-                    first_code = self.district_name_to_codes[first_name][0]
-                    first_prov = self.district_to_province[first_code]
-                    self.district_map[normalized] = [(first_name, first_prov)]
-                
-                # Add new entry with context
-                self.district_map[normalized].append((dist["Name"], dist["ProvinceCode"]))
-        
-        # Wards (store with district context for duplicates)
-        for ward in self.wards:
-            normalized = self._normalize(ward["Name"])
-            
-            if normalized not in self.ward_map:
-                self.ward_map[normalized] = ward["Name"]
-            else:
-                if isinstance(self.ward_map[normalized], str):
-                    first_name = self.ward_map[normalized]
-                    first_code = self.ward_name_to_codes[first_name][0]
-                    first_dist = self.ward_to_district[first_code]
-                    self.ward_map[normalized] = [(first_name, first_dist)]
-                
-                self.ward_map[normalized].append((ward["Name"], ward["DistrictCode"]))
-    
-    def _build_hierarchy(self):
-        """Build parent-child relationships - O(P + D + W)"""
-        
-        # Initialize province containers
-        for prov in self.provinces:
-            self.hierarchy[prov["Code"]] = {}
-        
-        # Add districts to provinces
-        for dist in self.districts:
-            prov_code = dist["ProvinceCode"]
-            if prov_code in self.hierarchy:
-                self.hierarchy[prov_code][dist["Code"]] = []
-        
-        # Add wards to districts
-        for ward in self.wards:
-            dist_code = ward["DistrictCode"]
-            if dist_code in self.district_to_province:
-                prov_code = self.district_to_province[dist_code]
-                if prov_code in self.hierarchy and dist_code in self.hierarchy[prov_code]:
-                    self.hierarchy[prov_code][dist_code].append(ward["Name"])
-    
-    def _add_aliases(self):
-        """Add common province aliases"""
-        
-        hcm_variants = [
-            "tp hcm", "tphcm", "tp. hcm", "tp.hcm",
-            "tp ho chi minh", "thanh pho ho chi minh",
-            "sai gon", "saigon", "sg", "hcmc"
-        ]
-        for variant in hcm_variants:
-            self.province_aliases[self._normalize(variant)] = "Hồ Chí Minh"
-        
-        hanoi_variants = ["ha noi", "hn", "thanh pho ha noi", "hanoi"]
-        for variant in hanoi_variants:
-            self.province_aliases[self._normalize(variant)] = "Hà Nội"
-        
-        self.province_aliases.update({
-            "da nang": "Đà Nẵng",
-            "can tho": "Cần Thơ",
-            "hai phong": "Hải Phòng",
-        })
-    
-    # ========================================================================
-    # PUBLIC API - All O(1) lookups
-    # ========================================================================
-    
-    def lookup_province(self, query: str) -> Optional[str]:
+    def _build_hierarchy_maps(self):
         """
-        Lookup province by name or alias - O(1)
+        Build parent-child relationship maps using codes
         
-        Args:
-            query: Province name, alias, or normalized form
+        Why code-based?
+            - Names duplicate, codes are unique
+            - O(1) validation: just check parent_code match
+        
+        Structure:
+            district_to_province: {"001" → "01"}
+                                   Ba Đình → Hà Nội
+            
+            ward_to_district: {"00001" → "001"}
+                               Phúc Xá → Ba Đình
+        
+        Time: O(D + W)
+        """
+        # District → Province mapping
+        self.district_to_province: Dict[str, str] = {
+            d['Code']: d['ProvinceCode']
+            for d in self.districts
+        }
+        
+        # Ward → District mapping
+        self.ward_to_district: Dict[str, str] = {
+            w['Code']: w['DistrictCode']
+            for w in self.wards
+        }
+    
+    # ====================================================================
+    # STEP 4: BUILD TRIES (for fast matching)
+    # ====================================================================
+    
+    def _build_tries(self):
+        """
+        Build separate Tries for each hierarchy level
+        
+        Why separate Tries?
+            - Semantic information: match in province_trie → it's a province
+            - Prevents ambiguity: "Tân Bình" could be province/district/ward
+        
+        Process:
+            1. Normalize name ("Hà Nội" → "ha noi")
+            2. Insert into Trie
+            3. Store original name for display
+        
+        Time: O(P×p + D×d + W×w) where p,d,w are avg name lengths
+              Effective: O(n) where n = total character count
+        """
+        from trie_parser import normalize_text
+        
+        # Province Trie
+        self.province_trie = Trie()
+        for p in self.provinces:
+            normalized = normalize_text(p['Name'])
+            self.province_trie.insert(normalized, p['Name'])
+        
+        # District Trie
+        self.district_trie = Trie()
+        for d in self.districts:
+            normalized = normalize_text(d['Name'])
+            self.district_trie.insert(normalized, d['Name'])
+        
+        # Ward Trie
+        self.ward_trie = Trie()
+        for w in self.wards:
+            normalized = normalize_text(w['Name'])
+            self.ward_trie.insert(normalized, w['Name'])
+    
+    # ====================================================================
+    # VALIDATION METHODS
+    # ====================================================================
+    
+    def validate_hierarchy(
+        self, 
+        ward_name: str, 
+        district_name: str, 
+        province_name: str
+    ) -> bool:
+        """
+        Validate if (ward, district, province) forms valid hierarchy
+        
+        Algorithm:
+            1. Get all possible codes for each name
+            2. Check if ANY combination is valid using hierarchy maps
+        
+        Example:
+            Input: ("Tân Bình", "Tân Bình", "TP.HCM")
+            
+            Step 1: Get codes
+                ward_codes = ["10363", "10364"]
+                district_codes = ["760"]
+                province_code = "79"
+            
+            Step 2: Check combinations
+                For ward "10363":
+                    ward_to_district["10363"] == "760" ✓
+                    district_to_province["760"] == "79" ✓
+                → VALID
+        
+        Time: O(W_dup × D_dup) where W_dup, D_dup are duplicate counts
+              In practice: O(1) since duplicates are small (~2-5)
         
         Returns:
-            Official province name, or None
+            True if valid hierarchy, False otherwise
         """
-        normalized = self._normalize(query)
+        # Get province code (unique)
+        province_code = self.province_name_to_code.get(province_name)
+        if not province_code:
+            return False
         
-        # Check aliases first
-        if normalized in self.province_aliases:
-            return self.province_aliases[normalized]
+        # Get possible district codes
+        district_codes = self.district_name_to_codes.get(district_name, [])
+        if not district_codes:
+            return False
         
-        # Check normalized map
-        return self.province_map.get(normalized)
-    
-    def lookup_district(self, query: str, province_context: Optional[str] = None) -> List[str]:
-        """
-        Lookup district by name - O(1)
-        
-        Args:
-            query: District name
-            province_context: Optional province to disambiguate
-        
-        Returns:
-            List of matching district names (may be multiple if duplicates exist)
-        """
-        normalized = self._normalize(query)
-        
-        if normalized not in self.district_map:
-            return []
-        
-        result = self.district_map[normalized]
-        
-        # Single match (no duplicates)
-        if isinstance(result, str):
-            return [result]
-        
-        # Multiple matches - filter by province if provided
-        if province_context:
-            prov_code = self.province_name_to_code.get(province_context)
-            if prov_code:
-                return [name for name, prov in result if prov == prov_code]
-        
-        # Return all matches
-        return [name for name, _ in result]
-    
-    def lookup_ward(self, query: str, district_context: Optional[str] = None) -> List[str]:
-        """
-        Lookup ward by name - O(1)
-        
-        Args:
-            query: Ward name
-            district_context: Optional district to disambiguate
-        
-        Returns:
-            List of matching ward names
-        """
-        normalized = self._normalize(query)
-        
-        if normalized not in self.ward_map:
-            return []
-        
-        result = self.ward_map[normalized]
-        
-        if isinstance(result, str):
-            return [result]
-        
-        # Filter by district if provided
-        if district_context:
-            dist_codes = self.district_name_to_codes.get(district_context, [])
-            return [name for name, dist_code in result if dist_code in dist_codes]
-        
-        return [name for name, _ in result]
-    
-    def get_full_address(self, ward_name: str) -> List[AddressMatch]:
-        """
-        Get all possible full addresses for a ward - O(k) where k = matches
-        
-        Args:
-            ward_name: Ward name to look up
-        
-        Returns:
-            List of AddressMatch objects with full hierarchy
-        """
-        results = []
-        
-        # Get all ward codes for this name
+        # Get possible ward codes
         ward_codes = self.ward_name_to_codes.get(ward_name, [])
+        if not ward_codes:
+            return False
         
+        # Check if ANY combination is valid
         for ward_code in ward_codes:
-            ward_obj = self.ward_by_code[ward_code]
-            dist_code = self.ward_to_district[ward_code]
-            dist_obj = self.district_by_code[dist_code]
-            prov_code = self.district_to_province[dist_code]
-            prov_obj = self.province_by_code[prov_code]
+            # Does this ward belong to any of the candidate districts?
+            ward_district = self.ward_to_district.get(ward_code)
             
-            results.append(AddressMatch(
-                ward=ward_obj["Name"],
-                district=dist_obj["Name"],
-                province=prov_obj["Name"],
-                ward_code=ward_code,
-                district_code=dist_code,
-                province_code=prov_code
-            ))
-        
-        return results
-    
-    def get_districts_in_province(self, province_name: str) -> List[str]:
-        """Get all districts in a province - O(k) where k = num districts"""
-        prov_code = self.province_name_to_code.get(province_name)
-        if not prov_code or prov_code not in self.hierarchy:
-            return []
-        
-        district_codes = self.hierarchy[prov_code].keys()
-        return sorted([self.district_by_code[code]["Name"] for code in district_codes])
-    
-    def get_wards_in_district(self, province_name: str, district_name: str) -> List[str]:
-        """Get all wards in a district - O(k) where k = num wards"""
-        prov_code = self.province_name_to_code.get(province_name)
-        if not prov_code:
-            return []
-        
-        # Find district code in this province
-        dist_codes = self.district_name_to_codes.get(district_name, [])
-        dist_code = None
-        for code in dist_codes:
-            if self.district_to_province[code] == prov_code:
-                dist_code = code
-                break
-        
-        if not dist_code:
-            return []
-        
-        if prov_code in self.hierarchy and dist_code in self.hierarchy[prov_code]:
-            return sorted(self.hierarchy[prov_code][dist_code])
-        
-        return []
-    
-    def validate_hierarchy(self, ward: str, district: str, province: str) -> bool:
-        """
-        Check if ward belongs to district in province - O(1)
-        
-        Returns:
-            True if hierarchy is valid
-        """
-        # Get codes
-        prov_code = self.province_name_to_code.get(province)
-        if not prov_code:
-            return False
-        
-        # Find matching district in this province
-        dist_codes = self.district_name_to_codes.get(district, [])
-        dist_code = None
-        for code in dist_codes:
-            if self.district_to_province[code] == prov_code:
-                dist_code = code
-                break
-        
-        if not dist_code:
-            return False
-        
-        # Check if ward exists in this district
-        ward_codes = self.ward_name_to_codes.get(ward, [])
-        for ward_code in ward_codes:
-            if self.ward_to_district[ward_code] == dist_code:
-                return True
+            if ward_district in district_codes:
+                # Ward belongs to this district - check district→province
+                if self.district_to_province.get(ward_district) == province_code:
+                    return True
         
         return False
     
-    # ========================================================================
-    # DEBUGGING & STATS
-    # ========================================================================
-    
-    def get_stats(self) -> dict:
-        """Get database statistics"""
+    def validate_district_province(
+        self,
+        district_name: str,
+        province_name: str
+    ) -> bool:
+        """
+        Validate if district belongs to province
         
-        # Count duplicates
-        dup_districts = sum(1 for v in self.district_map.values() if isinstance(v, list))
-        dup_wards = sum(1 for v in self.ward_map.values() if isinstance(v, list))
+        Time: O(D_dup) where D_dup = number of districts with same name
+        """
+        province_code = self.province_name_to_code.get(province_name)
+        if not province_code:
+            return False
         
-        return {
-            "provinces": len(self.provinces),
-            "districts": len(self.districts),
-            "wards": len(self.wards),
-            "duplicate_district_names": dup_districts,
-            "duplicate_ward_names": dup_wards,
-            "province_aliases": len(self.province_aliases),
-        }
-    
-    def debug_info(self):
-        """Print comprehensive debug information"""
-        stats = self.get_stats()
+        district_codes = self.district_name_to_codes.get(district_name, [])
         
-        print("\n" + "="*70)
-        print("OPTIMIZED ADDRESS DATABASE")
-        print("="*70)
+        for district_code in district_codes:
+            if self.district_to_province.get(district_code) == province_code:
+                return True
         
-        print(f"\n📊 Statistics:")
-        for key, value in stats.items():
-            print(f"   {key}: {value}")
-        
-        print(f"\n🔍 Sample Lookups:")
-        print(f"   Province 'ha noi' → {self.lookup_province('ha noi')}")
-        print(f"   District 'tan binh' → {self.lookup_district('tan binh')}")
-        
-        print(f"\n🏙️ Sample Full Address:")
-        matches = self.get_full_address("Cầu Diễn")
-        if matches:
-            match = matches[0]
-            print(f"   {match.ward}, {match.district}, {match.province}")
-        
-        print("\n" + "="*70 + "\n")
+        return False
 
 
 # ========================================================================
-# USAGE EXAMPLES
+# TESTING
 # ========================================================================
 
 if __name__ == "__main__":
-    db = AddressDatabase()
+    # Initialize database
+    db = AddressDatabase(data_dir="../Data")
     
-    db.debug_info()
+    print("\n" + "="*70)
+    print("TESTING TRIE LOOKUPS")
+    print("="*70)
     
-    # Test O(1) lookups
-    print("TEST: O(1) Province Lookup")
-    print("-" * 50)
-    for query in ["Hà Nội", "tp hcm", "saigon"]:
-        result = db.lookup_province(query)
-        print(f"  '{query}' → {result}")
+    # Test Trie lookups
+    test_lookups = [
+        ("ha noi", "province"),
+        ("nam tu liem", "district"),
+        ("cau dien", "ward"),
+        ("tan binh", "district"),  # duplicate name!
+    ]
     
-    # Test full address resolution
-    print("\nTEST: Full Address Resolution")
-    print("-" * 50)
-    ward = "Cầu Diễn"
-    matches = db.get_full_address(ward)
-    print(f"  Ward '{ward}' found in {len(matches)} location(s):")
-    for match in matches:
-        print(f"    → {match.ward}, {match.district}, {match.province}")
+    for normalized_name, entity_type in test_lookups:
+        trie = getattr(db, f"{entity_type}_trie")
+        result = trie.search(normalized_name)
+        print(f"{entity_type.capitalize()}: '{normalized_name}' → {result}")
+    
+    print("\n" + "="*70)
+    print("TESTING HIERARCHY VALIDATION")
+    print("="*70)
     
     # Test hierarchy validation
-    print("\nTEST: Hierarchy Validation")
-    print("-" * 50)
     test_cases = [
         ("Cầu Diễn", "Nam Từ Liêm", "Hà Nội", True),
-        ("Cầu Diễn", "Tân Bình", "Hồ Chí Minh", False),
+        ("Định Công", "Hoàng Mai", "Hà Nội", True),
+        ("Tân Bình", "Tân Bình", "Hồ Chí Minh", True),  # Fixed: use exact JSON name
+        ("Cầu Diễn", "Hoàng Mai", "Hà Nội", False),  # Wrong district
+        ("Tân Bình", "Nam Từ Liêm", "Hà Nội", False),  # Wrong combination
     ]
+    
     for ward, district, province, expected in test_cases:
-        valid = db.validate_hierarchy(ward, district, province)
-        status = "✓" if valid == expected else "✗"
-        print(f"  {status} {ward} in {district}, {province}: {valid}")
+        result = db.validate_hierarchy(ward, district, province)
+        status = "✓" if result == expected else "✗"
+        print(f"{status} ({ward}, {district}, {province}) → {result}")
+    
+    print("\n" + "="*70)
+    print("All tests complete!")
