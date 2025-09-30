@@ -140,7 +140,17 @@ def detect_type_markers(text: str) -> Dict[str, TypeHint]:
 # ========================================================================
 
 def build_province_abbreviations(provinces: List[Dict]) -> Dict[str, str]:
-    """Generate province abbreviations dynamically from database"""
+    """Generate province abbreviations dynamically from database
+    
+    CRITICAL: Only generate SAFE abbreviations that won't collide with
+    common district/ward names. Avoid short patterns that could match
+    substring of unrelated words.
+    
+    Strategy:
+    - Use TP/Thành phố prefix patterns (unambiguous)
+    - Avoid generating bare 2-character abbreviations like 'na', 'tn'
+    - Only use initials when ≥3 characters
+    """
     abbrevs = {}
     
     for province in provinces:
@@ -148,18 +158,23 @@ def build_province_abbreviations(provinces: List[Dict]) -> Dict[str, str]:
         name_lower = name.lower()
         tokens = name_lower.split()
         
+        # Only generate initials if ≥3 characters (safe from collisions)
         if len(tokens) >= 2:
             initials = ''.join([t[0] for t in tokens])
-            abbrevs[initials] = name_lower
+            if len(initials) >= 3:
+                abbrevs[initials] = name_lower
+            
+            # TP-prefixed versions (always safe)
             abbrevs[f'tp.{initials}'] = name_lower
             abbrevs[f'tp {initials}'] = name_lower
             abbrevs[f'tp. {initials}'] = name_lower
             abbrevs[f'tp{initials}'] = name_lower
         
-        if len(tokens) == 2:
-            abbrevs[f'{tokens[0][0]}.{tokens[1]}'] = name_lower
-            abbrevs[f'{tokens[0][0]} {tokens[1]}'] = name_lower
+        # REMOVED: The dangerous 2-token patterns that cause collisions
+        # OLD: abbrevs[f'{tokens[0][0]}.{tokens[1]}'] = name_lower
+        # This was creating 'n.an' → 'nghệ an', matching 'na' in 'nam'
         
+        # Only add thành phố abbreviations (safe prefix)
         if 'thành phố' in name_lower:
             core_name = name_lower.replace('thành phố', '').strip()
             if core_name:

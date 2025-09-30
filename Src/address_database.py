@@ -186,82 +186,76 @@ class AddressDatabase:
             w['Code']: w['DistrictCode']
             for w in self.wards
         }
-    
-    def generate_aliases(name: str) -> List[str]:
-        """
-        Generate alias variants for a normalized entity name.
-        
-        Rules:
-        - Full name as-is
-        - Initials of all tokens ("hcm" for "ho chi minh")
-        - First token + last token ("ho minh")
-        - First letters with dots ("h.c.m")
-        - Compact form without spaces ("hochiminh")
-        """
-        tokens = name.split()
-        aliases = set()
-
-        # 1. Original normalized form
-        aliases.add(name)
-
-        if len(tokens) > 1:
-            # 2. Initials
-            initials = ''.join(t[0] for t in tokens)
-            aliases.add(initials)
-
-            # 3. Dotted initials
-            aliases.add('.'.join(t[0] for t in tokens))
-
-            # 4. First + last token
-            aliases.add(f"{tokens[0]} {tokens[-1]}")
-
-        # 5. No-space version
-        aliases.add(''.join(tokens))
-
-        return list(aliases)
 
     # ====================================================================
-    # STEP 4: BUILD TRIES (for fast matching)
+    # STEP 4: BUILD TRIES (for fast matching with aliases)
     # ====================================================================
     
     def _build_tries(self):
         """
-        Build separate Tries for each hierarchy level
+        Build separate Tries for each hierarchy level WITH ALIAS SUPPORT
         
-        Why separate Tries?
-            - Semantic information: match in province_trie → it's a province
-            - Prevents ambiguity: "Tân Bình" could be province/district/ward
+        NEW: Generates and inserts multiple alias variants for each entity:
+        - Normalized base form: "ho chi minh"
+        - No-space compact: "hochiminh"
+        - Initials: "hcm"
+        - Dotted initials: "h.c.m"
+        - First + last: "ho minh" (3+ tokens)
+        - First initial + rest: "h. chi minh"
         
-        Process:
-            1. Normalize name ("Hà Nội" → "ha noi")
-            2. Insert into Trie
-            3. Insert common aliases
-            4. Store original name for display
+        All aliases point to the same original name for display.
         
-        Time: O(P×p + D×d + W×w) where p,d,w are avg name lengths
-              Effective: O(n) where n = total character count
+        Time: O(P×p×a + D×d×a + W×w×a) where:
+              p,d,w = avg name lengths
+              a = number of aliases per entity (~6)
+              Effective: O(n) since a is constant
         """
-
+        from alias_generator import generate_aliases
+        
+        print("Building Tries with alias support...")
+        
         # Province Trie
         self.province_trie = Trie()
+        province_alias_count = 0
         for p in self.provinces:
             name = p['Name']
-            normalized = normalize_text(name, self.norm_config)
-            self.province_trie.insert(normalized, name)
+            aliases = generate_aliases(name, self.norm_config)
+            
+            # Insert all aliases pointing to original name
+            for alias in aliases:
+                self.province_trie.insert(alias, name)
+            
+            province_alias_count += len(aliases)
+        
+        print(f"  ✓ Province Trie: {len(self.provinces)} entities, {province_alias_count} total aliases")
         
         # District Trie
         self.district_trie = Trie()
+        district_alias_count = 0
         for d in self.districts:
             name = d['Name'].strip()
-            normalized = normalize_text(name, self.norm_config)
-            self.district_trie.insert(normalized, name)
+            aliases = generate_aliases(name, self.norm_config)
+            
+            for alias in aliases:
+                self.district_trie.insert(alias, name)
+            
+            district_alias_count += len(aliases)
+        
+        print(f"  ✓ District Trie: {len(self.districts)} entities, {district_alias_count} total aliases")
         
         # Ward Trie
         self.ward_trie = Trie()
+        ward_alias_count = 0
         for w in self.wards:
             name = w['Name'].strip()
-            normalized = normalize_text(name, self.norm_config)
-            self.ward_trie.insert(normalized, name)
+            aliases = generate_aliases(name, self.norm_config)
+            
+            for alias in aliases:
+                self.ward_trie.insert(alias, name)
+            
+            ward_alias_count += len(aliases)
+        
+        print(f"  ✓ Ward Trie: {len(self.wards)} entities, {ward_alias_count} total aliases")
     
     def _build_lcs_candidates(self):
         """
