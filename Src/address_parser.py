@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 # Import from our modules
 from address_database import AddressDatabase
-from text_normalizer import normalize_text
+from normalizer import normalize_text
 from lcs_matcher import LCSMatcher  # NEW import
 
 

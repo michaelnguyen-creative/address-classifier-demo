@@ -1,60 +1,32 @@
-"""
-Debug script to investigate the Tân Bình validation issue
-"""
+import re
 
-from address_database import AddressDatabase
+text = "P.1, Q.3, TP.Hồ Chí Minh"
+text_lower = text.lower()
 
-# Initialize database
-db = AddressDatabase(data_dir="../Data")
+print(f"Input: {text}")
+print(f"Lowercase: {text_lower}")
+print()
 
-print("="*70)
-print("INVESTIGATING: Tân Bình validation failure")
-print("="*70)
+# Test the province pattern
+pattern = r'\btp\.?\s+([^,]+?)(?=\s*[,\n]|$)'
+match = re.search(pattern, text_lower)
 
-# Step 1: Check what province names exist
-print("\n[Step 1] All province names containing 'Hồ Chí Minh':")
-for p in db.provinces:
-    if "chí minh" in p['Name'].lower():
-        print(f"  - '{p['Name']}' (Code: {p['Code']})")
-
-# Step 2: Try exact lookup
-test_province_names = [
-    "Thành phố Hồ Chí Minh",
-    "Hồ Chí Minh",
-    "TP. Hồ Chí Minh",
-    "Thành Phố Hồ Chí Minh"  # Capital P
-]
-
-print("\n[Step 2] Testing province_name_to_code lookup:")
-for name in test_province_names:
-    code = db.province_name_to_code.get(name)
-    print(f"  '{name}' → {code}")
-
-# Step 3: Check Tân Bình ward codes
-print("\n[Step 3] All 'Tân Bình' ward codes:")
-ward_codes = db.ward_name_to_codes.get("Tân Bình", [])
-print(f"  Found {len(ward_codes)} wards named 'Tân Bình'")
-
-for ward_code in ward_codes[:5]:  # Show first 5
-    district_code = db.ward_to_district.get(ward_code)
-    province_code = db.district_to_province.get(district_code)
+if match:
+    print(f"✓ Pattern matched!")
+    print(f"  Full match: '{match.group(0)}'")
+    print(f"  Captured value: '{match.group(1)}'")
+    print(f"  Position: {match.start()}-{match.end()}")
+else:
+    print(f"✗ Pattern did NOT match")
+    print(f"  Testing why...")
     
-    # Get names
-    district = next((d['Name'] for d in db.districts if d['Code'] == district_code), "?")
-    province = next((p['Name'] for p in db.provinces if p['Code'] == province_code), "?")
+    # Try simpler patterns
+    if re.search(r'\btp\.?', text_lower):
+        print(f"  ✓ Found 'tp.'")
+    else:
+        print(f"  ✗ No 'tp.' found")
     
-    print(f"  Ward {ward_code} → District {district} ({district_code}) → Province {province} ({province_code})")
-
-# Step 4: Check Tân Bình district codes
-print("\n[Step 4] All 'Tân Bình' district codes:")
-district_codes = db.district_name_to_codes.get("Tân Bình", [])
-print(f"  Found {len(district_codes)} districts named 'Tân Bình'")
-
-for district_code in district_codes:
-    province_code = db.district_to_province.get(district_code)
-    province = next((p['Name'] for p in db.provinces if p['Code'] == province_code), "?")
-    print(f"  District {district_code} → Province {province} ({province_code})")
-
-print("\n" + "="*70)
-print("DIAGNOSIS COMPLETE")
-print("="*70)
+    if re.search(r'\btp\.?\s', text_lower):
+        print(f"  ✓ Found 'tp.' with space")
+    else:
+        print(f"  ✗ No space after 'tp.'")

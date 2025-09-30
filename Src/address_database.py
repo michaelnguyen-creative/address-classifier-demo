@@ -18,7 +18,7 @@ from typing import Dict, List, Tuple, Optional
 
 # Import Trie and normalize_text from trie_parser module
 from trie_parser import Trie
-from text_normalizer import NormalizationConfig, normalize_text
+from normalizer import NormalizationConfig, normalize_text
 
 
 # ========================================================================
