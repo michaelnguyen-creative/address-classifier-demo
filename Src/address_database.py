@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 # Import Trie and normalize_text from trie_parser module
-from trie_parser import Trie, normalize_text
+from trie_parser import Trie
+from text_normalizer import NormalizationConfig, normalize_text
 
 
 # ========================================================================
@@ -70,6 +71,9 @@ class AddressDatabase:
         # Step 3: Build hierarchy maps (code → parent_code)
         self._build_hierarchy_maps()
         
+        self.norm_config = NormalizationConfig(self.provinces)
+        print(f"✓ Generated {len(self.norm_config.province_abbreviations)} abbreviations")
+
         # Step 4: Build Tries for fast matching
         self._build_tries()
         
@@ -204,36 +208,26 @@ class AddressDatabase:
         Time: O(P×p + D×d + W×w) where p,d,w are avg name lengths
               Effective: O(n) where n = total character count
         """
-        # Define common aliases for provinces
-        province_aliases = {
-            "Hồ Chí Minh": ["hcm", "tp hcm", "tphcm", "thanh pho ho chi minh"],
-            "Hà Nội": ["hn"],
-            "Đà Nẵng": ["dn", "da nang"],
-        }
-        
+
         # Province Trie
         self.province_trie = Trie()
         for p in self.provinces:
             name = p['Name']
-            normalized = normalize_text(name)
+            normalized = normalize_text(name, self.norm_config)
             self.province_trie.insert(normalized, name)
-            
-            # Insert aliases if they exist
-            if name in province_aliases:
-                for alias in province_aliases[name]:
-                    self.province_trie.insert(alias, name)
         
         # District Trie
         self.district_trie = Trie()
         for d in self.districts:
-            normalized = normalize_text(d['Name'])
-            self.district_trie.insert(normalized, d['Name'])
+            name = d['Name'].strip()
+            normalized = normalize_text(name, self.norm_config)
+            self.district_trie.insert(normalized, name)
         
         # Ward Trie
         self.ward_trie = Trie()
         for w in self.wards:
             name = w['Name'].strip()
-            normalized = normalize_text(name)
+            normalized = normalize_text(name, self.norm_config)
             self.ward_trie.insert(normalized, name)
     
     def _build_lcs_candidates(self):
@@ -248,19 +242,19 @@ class AddressDatabase:
 
         # Province candidates: List[(name, tokens)]
         self.province_candidates = [
-            (name, normalize_text(name).split())
+            (name, normalize_text(name, self.norm_config).split())
             for name in self.province_name_to_code.keys()
         ]
 
         # District candidates: List[(name, tokens)]
         self.district_candidates = [
-            (name, normalize_text(name).split())
+            (name, normalize_text(name, self.norm_config).split())
             for name in self.district_name_to_codes.keys()
         ]
 
         # Ward candidates: List[(name, tokens)]
         self.ward_candidates = [
-            (name, normalize_text(name).split())
+            (name, normalize_text(name, self.norm_config).split())
             for name in self.ward_name_to_codes.keys()
         ]
 

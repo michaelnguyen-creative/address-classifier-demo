@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 # Import from our modules
 from address_database import AddressDatabase
-from trie_parser import normalize_text, Trie
+from text_normalizer import normalize_text
 from lcs_matcher import LCSMatcher  # NEW import
 
 
@@ -96,7 +96,7 @@ class AddressParser:
         if not text or not text.strip():
             return ParsedAddress()
         
-        normalized = normalize_text(text)
+        normalized = normalize_text(text, self.db.norm_config)
         input_tokens = normalized.split()
         
         if debug:
@@ -146,7 +146,16 @@ class AddressParser:
     
     def _try_trie_match(self, normalized_text: str, debug: bool = False) -> ParsedAddress:
         """
-        Try Trie exact matching
+        Try Trie exact matching with hierarchical masking
+        
+        Strategy:
+        1. Match province first
+        2. Mask province tokens, then match district
+        3. Mask district tokens, then match ward
+        4. Validate hierarchy using codes
+        
+        This prevents the same substring (e.g., "Tuyên Quang") from being
+        matched as both province AND district.
         
         Args:
             normalized_text: Normalized input text
@@ -155,29 +164,84 @@ class AddressParser:
         Returns:
             ParsedAddress (may be invalid if no match)
         
-        Algorithm:
-            1. Search in all 3 tries (province, district, ward)
-            2. Get matches with position information
-            3. Select best match from each tier
-            4. Look up codes for validation
+        Time: O(m) where m = len(text), single pass per tier
         """
-        # Search in all three tries
-        province_matches = self.db.province_trie.search_in_text(normalized_text)
-        district_matches = self.db.district_trie.search_in_text(normalized_text)
-        ward_matches = self.db.ward_trie.search_in_text(normalized_text)
+        tokens = normalized_text.split()
         
         if debug:
-            print(f"\n  Trie Matches:")
-            print(f"    Provinces: {province_matches}")
-            print(f"    Districts: {district_matches}")
-            print(f"    Wards: {ward_matches}")
+            print(f"\n  Input tokens: {tokens}")
         
-        # Select best match from each (longest + rightmost)
+        # ===== STEP 1: Match Province =====
+        province_matches = self.db.province_trie.search_in_text(normalized_text)
         province = self._select_best_match(province_matches)
+        province_span = None  # (start, end) token indices
+        
+        if province and province_matches:
+            # Find the span of the selected province match
+            for match in province_matches:
+                if match[0] == province:
+                    province_span = (match[1], match[2])  # (start_pos, end_pos)
+                    break
+        
+        if debug:
+            print(f"\n  Province matches: {province_matches}")
+            print(f"  Selected: {province} at {province_span}")
+        
+        # ===== STEP 2: Match District (with masking) =====
+        if province_span:
+            # Mask province tokens to prevent re-matching
+            masked_tokens = tokens.copy()
+            for i in range(province_span[0], province_span[1]):
+                if i < len(masked_tokens):
+                    masked_tokens[i] = "___"  # Unmatchable placeholder
+            
+            district_search_text = " ".join(masked_tokens)
+        else:
+            district_search_text = normalized_text
+        
+        district_matches = self.db.district_trie.search_in_text(district_search_text)
         district = self._select_best_match(district_matches)
+        district_span = None
+        
+        if district and district_matches:
+            for match in district_matches:
+                if match[0] == district:
+                    district_span = (match[1], match[2])
+                    break
+        
+        if debug:
+            print(f"\n  District search text: {district_search_text}")
+            print(f"  District matches: {district_matches}")
+            print(f"  Selected: {district} at {district_span}")
+        
+        # ===== STEP 3: Match Ward (with masking) =====
+        if province_span or district_span:
+            # Mask both province and district tokens
+            masked_tokens = tokens.copy()
+            
+            if province_span:
+                for i in range(province_span[0], province_span[1]):
+                    if i < len(masked_tokens):
+                        masked_tokens[i] = "___"
+            
+            if district_span:
+                for i in range(district_span[0], district_span[1]):
+                    if i < len(masked_tokens):
+                        masked_tokens[i] = "___"
+            
+            ward_search_text = " ".join(masked_tokens)
+        else:
+            ward_search_text = normalized_text
+        
+        ward_matches = self.db.ward_trie.search_in_text(ward_search_text)
         ward = self._select_best_match(ward_matches)
         
-        # Build result
+        if debug:
+            print(f"\n  Ward search text: {ward_search_text}")
+            print(f"  Ward matches: {ward_matches}")
+            print(f"  Selected: {ward}")
+        
+        # ===== STEP 4: Build Result & Validate Hierarchy =====
         result = ParsedAddress(
             province=province,
             district=district,
@@ -189,14 +253,12 @@ class AddressParser:
             result.province_code = self.db.province_name_to_code.get(result.province)
         
         if result.district and result.province:
-            # Get district codes that belong to this province
             result.district_code = self._find_valid_district_code(
                 result.district, 
                 result.province
             )
         
         if result.ward and result.district and result.province:
-            # Get ward code that belongs to this district
             result.ward_code = self._find_valid_ward_code(
                 result.ward,
                 result.district,
@@ -371,6 +433,18 @@ class AddressParser:
             district=trie_result.district,
             ward=trie_result.ward
         )
+
+        # NEW: Clear invalid trie results before LCS
+        # (Don't let bad Trie matches pollute LCS)
+        if result.ward and not trie_result.ward_code:
+            if debug:
+                print(f"  Clearing invalid Trie ward: '{result.ward}'")
+            result.ward = None
+        
+        if result.district and not trie_result.district_code:
+            if debug:
+                print(f"  Clearing invalid Trie district: '{result.district}'")
+            result.district = None
         
         # ===== CASE 1: No province found → Search all levels =====
         if not result.province:
