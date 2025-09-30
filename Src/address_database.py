@@ -187,6 +187,39 @@ class AddressDatabase:
             for w in self.wards
         }
     
+    def generate_aliases(name: str) -> List[str]:
+        """
+        Generate alias variants for a normalized entity name.
+        
+        Rules:
+        - Full name as-is
+        - Initials of all tokens ("hcm" for "ho chi minh")
+        - First token + last token ("ho minh")
+        - First letters with dots ("h.c.m")
+        - Compact form without spaces ("hochiminh")
+        """
+        tokens = name.split()
+        aliases = set()
+
+        # 1. Original normalized form
+        aliases.add(name)
+
+        if len(tokens) > 1:
+            # 2. Initials
+            initials = ''.join(t[0] for t in tokens)
+            aliases.add(initials)
+
+            # 3. Dotted initials
+            aliases.add('.'.join(t[0] for t in tokens))
+
+            # 4. First + last token
+            aliases.add(f"{tokens[0]} {tokens[-1]}")
+
+        # 5. No-space version
+        aliases.add(''.join(tokens))
+
+        return list(aliases)
+
     # ====================================================================
     # STEP 4: BUILD TRIES (for fast matching)
     # ====================================================================
