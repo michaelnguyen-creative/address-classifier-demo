@@ -175,25 +175,40 @@ def build_expansion_patterns() -> List[tuple]:
     Expansion patterns for Vietnamese address normalization
     Only 3 levels: province/city, district, ward/commune
     Handles compact, spaced, dotted, and uppercase variations.
+    
+    CRITICAL FIX: Single-letter patterns (h, q, p, x) must be followed by:
+    - A dot: "H." or "H. "
+    - A space + digit: "H 3", "P 1"
+    - A space + uppercase: "H Nam"
+    
+    This prevents matching words like "hồ", "quận", "phường", "xã" themselves.
     """
     return [
         # --- Province / City ---
-        (r'\b(?:tp|t\.p)\s*\.?\s*([a-zA-ZÀ-ỹ\d]+)', r'thành phố \1', 'TP → Thành phố'),
+        (r'\b(?:tp|t\.p)\.?\s+([a-zA-ZÀ-ỹ\d]+)', r'thành phố \1', 'TP → Thành phố'),
         (r'\bthanh\s*pho\s+([a-zA-ZÀ-ỹ\d]+)', r'thành phố \1', 'Thanh pho → Thành phố'),
         (r'\btinh[h]?\s+([a-zA-ZÀ-ỹ\d]+)', r'tỉnh \1', 'Tinh → Tỉnh'),
 
         # --- District ---
-        (r'\bq\s*\.?\s*([a-zA-ZÀ-ỹ\d]+)', r'quận \1', 'Q → Quận'),
+        # FIXED: Single 'q' only matches with dot OR space+capital/digit
+        (r'\bq\.\s*([a-zA-ZÀ-ỹ\d]+)', r'quận \1', 'Q. → Quận'),
+        (r'\bq\s+([A-ZÀ-Ỹ\d][a-zA-ZÀ-ỹ\d]*)', r'quận \1', 'Q Capital → Quận'),
         (r'\bquan\s+([a-zA-ZÀ-ỹ\d]+)', r'quận \1', 'Quan → Quận'),
-        (r'\bh\s*\.?\s*([a-zA-ZÀ-ỹ\d]+)', r'huyện \1', 'H → Huyện'),
+        # FIXED: Single 'h' only matches with dot OR space+capital/digit
+        (r'\bh\.\s*([a-zA-ZÀ-ỹ\d]+)', r'huyện \1', 'H. → Huyện'),
+        (r'\bh\s+([A-ZÀ-Ỹ\d][a-zA-ZÀ-ỹ\d]*)', r'huyện \1', 'H Capital → Huyện'),
         (r'\bhuyen\s+([a-zA-ZÀ-ỹ\d]+)', r'huyện \1', 'Huyen → Huyện'),
 
         # --- Ward / Commune ---
-        (r'\bp\s*\.?\s*([a-zA-ZÀ-ỹ\d]+)', r'phường \1', 'P → Phường'),
+        # FIXED: Single 'p' only matches with dot OR space+capital/digit
+        (r'\bp\.\s*([a-zA-ZÀ-ỹ\d]+)', r'phường \1', 'P. → Phường'),
+        (r'\bp\s+(\d+)', r'phường \1', 'P digit → Phường'),
         (r'\bphuong\s+([a-zA-ZÀ-ỹ\d]+)', r'phường \1', 'Phuong → Phường'),
-        (r'\bx\s*\.?\s*([a-zA-ZÀ-ỹ\d]+)', r'xã \1', 'X → Xã'),
+        # FIXED: Single 'x' only matches with dot OR space+capital/digit
+        (r'\bx\.\s*([a-zA-ZÀ-ỹ\d]+)', r'xã \1', 'X. → Xã'),
+        (r'\bx\s+([A-ZÀ-Ỹ\d][a-zA-ZÀ-ỹ\d]*)', r'xã \1', 'X Capital → Xã'),
         (r'\bxa\s+([a-zA-ZÀ-ỹ\d]+)', r'xã \1', 'Xa → Xã'),
-        (r'\btt\s*\.?\s*([a-zA-ZÀ-ỹ\d]+)', r'thị trấn \1', 'TT → Thị trấn'),
+        (r'\btt\.?\s+([a-zA-ZÀ-ỹ\d]+)', r'thị trấn \1', 'TT → Thị trấn'),
         (r'\bthi\s+tran\s+([a-zA-ZÀ-ỹ\d]+)', r'thị trấn \1', 'Thi tran → Thị trấn'),
     ]
 
@@ -292,15 +307,16 @@ def normalize_text(text: str, config: NormalizationConfig) -> str:
     punctuation_to_remove = string.punctuation.replace('-', '')
     text = text.translate(str.maketrans('', '', punctuation_to_remove))
     
-    # Step 5: Strip administrative prefixes
+    # Step 5: Strip administrative prefixes (FIXED: only strip if followed by space)
     normalized_prefixes = config.get_normalized_prefixes()
     
+    # Only strip prefixes when followed by whitespace
     for prefix in normalized_prefixes:
         if text.startswith(prefix + ' '):
-            text = text[len(prefix):].strip()
-        elif text.startswith(prefix):
-            text = text[len(prefix):].strip()
+            text = text[len(prefix) + 1:].strip()  # +1 to also remove the space
+            break  # Only strip once at the beginning
     
+    # Also remove prefixes that appear mid-text with word boundaries
     for prefix in normalized_prefixes:
         text = re.sub(r'\b' + re.escape(prefix) + r'\s+(?=\w)', '', text)
     
