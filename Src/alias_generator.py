@@ -45,6 +45,8 @@ def generate_aliases(
             "h.c.m",            # dotted initials
             "ho minh",          # first + last
             "h. chi minh"       # first initial + rest
+            "h chi minh",       # first initial + rest (implicit)
+            "hchiminh"       # no spaces + first initial + rest (implicit)
         }
         
         "Quận Bình Thạnh" → {
@@ -53,6 +55,8 @@ def generate_aliases(
             "bt",               # initials
             "b.t",              # dotted initials
             "b. thanh"          # first initial + rest
+            "b thanh",          # first initial + rest (implicit)
+            "bthanh"          # no spaces + first initial + rest (implicit)
         }
         
         "Phường 1" → {
@@ -101,6 +105,14 @@ def generate_aliases(
     # --- Variant 6: First initial + rest ---
     first_initial_rest = f"{tokens[0][0]}. {' '.join(tokens[1:])}"
     aliases.add(first_initial_rest)
+
+    # --- Implicit Variant: First initial + rest (no dot) ---
+    first_initial_rest_no_dot = f"{tokens[0][0]} {' '.join(tokens[1:])}"
+    aliases.add(first_initial_rest_no_dot)
+    
+    # --- Implicit Variant: No-space + First initial + rest ---
+    no_space_first_initial_rest = f"{tokens[0][0]}{''.join(tokens[1:])}"
+    aliases.add(no_space_first_initial_rest)
     
     return aliases
 

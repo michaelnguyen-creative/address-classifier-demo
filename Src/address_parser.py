@@ -65,8 +65,6 @@ class AddressParser:
         
         # Build database (includes Tries)
         self.db = AddressDatabase(data_dir=data_dir)
-        
-        print("✓ Parser ready (Trie + validation)")
 
         # NEW: Initialize LCS matcher
         self.lcs_matcher = LCSMatcher(threshold=0.4)
@@ -77,7 +75,7 @@ class AddressParser:
     # MAIN PARSING INTERFACE
     # ========================================================================
     
-    def parse(self, text: str, debug: bool = False) -> ParsedAddress:
+    def parse(self, text: str, debug: bool = True) -> ParsedAddress:
         """
         Parse address with multi-tier fallback
         
@@ -144,7 +142,7 @@ class AddressParser:
     # TIER 1: TRIE MATCHING
     # ========================================================================
     
-    def _try_trie_match(self, normalized_text: str, debug: bool = False) -> ParsedAddress:
+    def _try_trie_match(self, normalized_text: str, debug: bool = True) -> ParsedAddress:
         """
         Try Trie exact matching with hierarchical masking
         
@@ -293,7 +291,7 @@ class AddressParser:
         # Sort by: length DESC, then end position DESC
         sorted_matches = sorted(
             matches,
-            key=lambda x: (len(x[0]), x[2]),
+            key=lambda x: (x[2] - x[1], x[2]),
             reverse=True
         )
         
@@ -355,7 +353,7 @@ class AddressParser:
     # VALIDATION
     # ========================================================================
     
-    def _is_valid_result(self, result: ParsedAddress, debug: bool = False) -> bool:
+    def _is_valid_result(self, result: ParsedAddress, debug: bool = True) -> bool:
         """
         Check if parse result is valid
         
@@ -634,6 +632,17 @@ if __name__ == "__main__":
         # Edge cases
         "Ha Noi",
         "HCM",
+
+        # new cases
+        "TT Tân Bình Huyện Yên Sơn, Tuyên Quang",
+        " ,H Krông Năng,Đắk Lắk",
+        "Liên Minh,,TỉnhThái Nguyên",
+        "XMiền Đồi,LaZc Sơn,"
+        ",H Bắc Son,TỉnhLạng Son",
+        "357/28,Ng-T- Thuật,P1,Q3,TP.HồChíMinh.",
+        "284DBis Ng Văn Giáo, P3, Mỹ Tho, T.Giang.",
+        "Nà Làng Phú Bình, Chiêm Hoá, Tuyên Quang",
+        "59/12 Ng-B-Khiêm, Đa Kao Quận 1, TP. Hồ Chí Minh"
     ]
     
     print("\n")

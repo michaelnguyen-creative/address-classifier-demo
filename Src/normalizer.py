@@ -318,7 +318,12 @@ def normalize_text(text: str, config: NormalizationConfig) -> str:
         result.append(VIETNAMESE_CHAR_MAP.get(char, char))
     text = ''.join(result)
     
-    # Step 4: Remove punctuation (except hyphens)
+    # Step 4: Convert delimiters to spaces FIRST
+    # This prevents token fusion: "P1,Q3" → "P1 Q3" not "P1Q3"
+    for delimiter in ',./;:':
+        text = text.replace(delimiter, ' ')
+
+    # Then remove other punctuation except hyphens
     punctuation_to_remove = string.punctuation.replace('-', '')
     text = text.translate(str.maketrans('', '', punctuation_to_remove))
     
@@ -331,7 +336,7 @@ def normalize_text(text: str, config: NormalizationConfig) -> str:
             text = text[len(prefix) + 1:].strip()  # +1 to also remove the space
             break  # Only strip once at the beginning
     
-    # Also remove prefixes that appear mid-text with word boundaries
+    # Also remove prefixes mid-text
     for prefix in normalized_prefixes:
         text = re.sub(r'\b' + re.escape(prefix) + r'\s+(?=\w)', '', text)
     
