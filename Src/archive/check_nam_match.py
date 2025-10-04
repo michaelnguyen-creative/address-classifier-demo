@@ -4,7 +4,7 @@ Check ALL province abbreviations to find the exact match
 
 import json
 from pathlib import Path
-from normalizer import build_province_abbreviations, normalize_text, NormalizationConfig
+from archive.normalizer import build_province_abbreviations, normalize_text, NormalizationConfig
 
 # Load provinces
 with open("../Data/Provinces.json", encoding="utf-8") as f:

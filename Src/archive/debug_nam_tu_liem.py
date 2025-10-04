@@ -2,7 +2,7 @@
 Debug normalization of 'Nam Từ Liêm'
 """
 
-from normalizer import NormalizationConfig, normalize_text
+from archive.normalizer import NormalizationConfig, normalize_text
 
 sample_provinces = [{'Name': 'Hồ Chí Minh'}, {'Name': 'Hà Nội'}]
 config = NormalizationConfig(sample_provinces)

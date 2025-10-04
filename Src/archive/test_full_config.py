@@ -4,7 +4,7 @@ Test with full province list like AddressDatabase does
 
 import json
 from pathlib import Path
-from normalizer import NormalizationConfig
+from archive.normalizer import NormalizationConfig
 from alias_generator import generate_aliases
 
 # Load ALL provinces like AddressDatabase does

@@ -2,7 +2,7 @@
 Test generate_aliases directly with district names
 """
 
-from normalizer import NormalizationConfig
+from archive.normalizer import NormalizationConfig
 from alias_generator import generate_aliases
 
 # Create config

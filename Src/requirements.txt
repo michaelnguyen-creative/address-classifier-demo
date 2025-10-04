@@ -18,6 +18,9 @@ pyyaml>=6.0            # Configuration file parsing
 numpy>=1.21.0          # Numerical operations for analysis only
 pandas>=1.4.0          # Data analysis during development only
 
+# Trie Implementation (development/learning)
+pygtrie>=2.5.0         # Production-grade trie for learning purposes
+
 # Performance Analysis (development only)
 memory-profiler>=0.60.0  # Memory usage profiling
 line-profiler>=3.5.0     # Line-by-line profiling

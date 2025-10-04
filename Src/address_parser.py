@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 
 # Import from our modules
 from address_database import AddressDatabase
-from normalizer import normalize_text
+from normalizer_enhanced import normalize_text_enhanced
+
 from lcs_matcher import LCSMatcher  # NEW import
 
 
@@ -77,7 +78,7 @@ class AddressParser:
     
     def parse(self, text: str, debug: bool = True) -> ParsedAddress:
         """
-        Parse address with multi-tier fallback
+        Parse address with multi-tier fallback and intelligent context handoff
         
         Args:
             text: Raw address text
@@ -87,14 +88,15 @@ class AddressParser:
             ParsedAddress with extracted components and metadata
         
         Flow:
-            1. Try Trie exact match
-            2. Validate hierarchy
-            3. Return best result
+            1. Tier 1: Trie exact match
+            2. Validate and clean Tier 1 output
+            3. Tier 2: LCS with cleaned context
+            4. Return best result with appropriate confidence
         """
         if not text or not text.strip():
             return ParsedAddress()
         
-        normalized = normalize_text(text, self.db.norm_config)
+        normalized = normalize_text_enhanced(text, self.db.norm_config)
         input_tokens = normalized.split()
         
         if debug:
@@ -118,25 +120,142 @@ class AddressParser:
             return trie_result
         
         if debug:
-            print("✗ Trie match failed")
+            print("✗ Trie match failed - preparing context for Tier 2")
         
-        # ===== TIER 2: LCS ALIGNMENT =====  # ← NEW!
+        # ===== TIER 1 → TIER 2 HANDOFF: Clean invalid components =====
+        tier2_context = self._prepare_tier2_context(trie_result, debug)
+        
+        # ===== TIER 2: LCS ALIGNMENT =====
         if debug:
             print("\n[TIER 2] Falling back to LCS...")
         
-        lcs_result = self._try_lcs_match(input_tokens, trie_result, debug)
+        lcs_result = self._try_lcs_match(input_tokens, tier2_context, debug)
         
         if self._is_valid_result(lcs_result, debug):
             lcs_result.match_method = "lcs"
-            # Confidence based on how complete the result is
-            lcs_result.confidence = 0.7 if lcs_result.ward else \
-                                0.6 if lcs_result.district else 0.5
+            
+            # Adaptive confidence based on context quality
+            if tier2_context.province:
+                # Had valid province from Tier 1 → higher confidence
+                lcs_result.confidence = 0.8 if lcs_result.ward else \
+                                    0.75 if lcs_result.district else 0.7
+            else:
+                # Found everything from scratch → lower confidence
+                lcs_result.confidence = 0.6 if lcs_result.ward else \
+                                    0.55 if lcs_result.district else 0.5
+            
             return lcs_result
         
         if debug:
             print("\n✗ All tiers failed - returning empty result")
         
         return ParsedAddress()
+    
+    # ========================================================================
+    # TIER 1 → TIER 2 HANDOFF: CONTEXT PREPARATION
+    # ========================================================================
+    
+    def _prepare_tier2_context(self, trie_result: ParsedAddress, debug: bool = False) -> ParsedAddress:
+        """
+        Validate and clean Tier 1 output before passing to Tier 2
+        
+        Algorithm:
+        1. Check what Trie found (province, district, ward)
+        2. Validate each component using hierarchy codes
+        3. Clear invalid components to prevent error propagation
+        4. Return cleaned context for LCS
+        
+        Invariant: Output maintains valid hierarchy or is empty
+        
+        Why this matters:
+        - Prevents invalid Tier 1 matches from polluting Tier 2 search space
+        - Example: If Trie finds wrong district for a province, don't pass it!
+        - Tier 2 (LCS) will search more accurately without bad anchors
+        
+        Args:
+            trie_result: Raw output from Tier 1 (may have invalid hierarchy)
+            debug: If True, log what was cleared
+        
+        Returns:
+            Cleaned ParsedAddress with only valid hierarchical components
+        
+        Time Complexity: O(1) - just hash map lookups
+        """
+        context = ParsedAddress()
+        
+        if debug:
+            print(f"\n[TIER 1→2 HANDOFF] Validating Trie output...")
+            print(f"  Raw Trie result: P={trie_result.province}, "
+                  f"D={trie_result.district}, W={trie_result.ward}")
+        
+        # ===== STEP 1: Validate Province =====
+        if trie_result.province:
+            province_code = self.db.province_name_to_code.get(trie_result.province)
+            if province_code:
+                # Province is valid - keep it as anchor for Tier 2
+                context.province = trie_result.province
+                context.province_code = province_code
+                if debug:
+                    print(f"  ✓ Province '{context.province}' is valid (code: {province_code})")
+            else:
+                if debug:
+                    print(f"  ✗ Province '{trie_result.province}' not in database - discarding")
+        
+        # ===== STEP 2: Validate District (only if province is valid) =====
+        # Design decision: Don't keep district without province (see requirements)
+        if context.province and trie_result.district:
+            district_code = self._find_valid_district_code(
+                trie_result.district, 
+                context.province
+            )
+            if district_code:
+                # District belongs to this province - keep it!
+                context.district = trie_result.district
+                context.district_code = district_code
+                if debug:
+                    print(f"  ✓ District '{context.district}' is valid in "
+                          f"'{context.province}' (code: {district_code})")
+            else:
+                if debug:
+                    print(f"  ✗ District '{trie_result.district}' doesn't belong to "
+                          f"province '{context.province}' - discarding")
+        elif trie_result.district and not context.province:
+            # Have district but no province - discard (per requirements)
+            if debug:
+                print(f"  ✗ District '{trie_result.district}' found without valid province - discarding")
+        
+        # ===== STEP 3: Validate Ward (only if district is valid) =====
+        if context.district and context.province and trie_result.ward:
+            ward_code = self._find_valid_ward_code(
+                trie_result.ward,
+                context.district,
+                context.province
+            )
+            if ward_code:
+                # Ward belongs to this district - keep it!
+                context.ward = trie_result.ward
+                context.ward_code = ward_code
+                if debug:
+                    print(f"  ✓ Ward '{context.ward}' is valid in "
+                          f"'{context.district}' (code: {ward_code})")
+            else:
+                if debug:
+                    print(f"  ✗ Ward '{trie_result.ward}' doesn't belong to "
+                          f"district '{context.district}' - discarding")
+        elif trie_result.ward and not (context.district and context.province):
+            # Have ward but missing district or province - discard
+            if debug:
+                print(f"  ✗ Ward '{trie_result.ward}' found without valid district/province - discarding")
+        
+        if debug:
+            print(f"  Cleaned context: P={context.province}, "
+                  f"D={context.district}, W={context.ward}")
+            if context.province:
+                print(f"  → LCS will search within '{context.province}' (constrained search space)")
+            else:
+                print(f"  → LCS will search all provinces (unconstrained)")
+        
+        return context
     
     # ========================================================================
     # TIER 1: TRIE MATCHING

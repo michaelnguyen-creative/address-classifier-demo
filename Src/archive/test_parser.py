@@ -270,10 +270,10 @@ def run_tests(test_file: str, data_dir: str = "../Data"):
     # Show first 10 failures
     if results['failures']:
         print(f"\n" + "="*70)
-        print(f"SAMPLE FAILURES (first 10 of {len(results['failures'])})")
+        print(f"SAMPLE FAILURES (first 100 of {len(results['failures'])})")
         print("="*70)
         
-        for failure in results['failures'][:10]:
+        for failure in results['failures'][:100]:
             print(f"\n[{failure['index']}] Input: {failure['input']}")
             print(f"  Expected: P={failure['expected'].get('province')}, "
                   f"D={failure['expected'].get('district')}, "

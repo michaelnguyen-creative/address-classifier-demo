@@ -4,7 +4,7 @@ Find the problematic abbreviations
 
 import json
 from pathlib import Path
-from normalizer import build_province_abbreviations
+from archive.normalizer import build_province_abbreviations
 
 # Load ALL provinces
 with open("../Data/Provinces.json", encoding="utf-8") as f:

@@ -2,7 +2,7 @@
 Debug ALL steps of normalize_text
 """
 
-from normalizer import NormalizationConfig, VIETNAMESE_CHAR_MAP
+from archive.normalizer import NormalizationConfig, VIETNAMESE_CHAR_MAP
 import re
 import string
 

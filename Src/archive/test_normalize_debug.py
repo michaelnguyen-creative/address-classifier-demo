@@ -2,7 +2,7 @@
 Debug script to trace exactly what normalize_text is doing
 """
 
-from normalizer import normalize_text, NormalizationConfig, VIETNAMESE_CHAR_MAP
+from archive.normalizer import normalize_text, NormalizationConfig, VIETNAMESE_CHAR_MAP
 
 # Create minimal config
 sample_provinces = [{'Name': 'Hồ Chí Minh'}, {'Name': 'Hà Nội'}]

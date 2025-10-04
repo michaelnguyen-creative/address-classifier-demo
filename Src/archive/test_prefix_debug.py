@@ -2,7 +2,7 @@
 Debug Step 5 - prefix stripping in detail
 """
 
-from normalizer import NormalizationConfig
+from archive.normalizer import NormalizationConfig
 import re
 
 # Create minimal config

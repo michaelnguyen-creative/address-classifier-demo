@@ -11,7 +11,7 @@ Generates normalized variants of entity names for matching:
 """
 
 from typing import List, Set
-from normalizer import normalize_text, NormalizationConfig
+from archive.normalizer import normalize_text, NormalizationConfig
 
 
 # ========================================================================
@@ -151,7 +151,7 @@ def generate_aliases_batch(
 # ========================================================================
 
 if __name__ == "__main__":
-    from normalizer import NormalizationConfig
+    from archive.normalizer import NormalizationConfig
     
     # Mock config for testing
     sample_provinces = [{'Name': 'Hồ Chí Minh'}, {'Name': 'Hà Nội'}]

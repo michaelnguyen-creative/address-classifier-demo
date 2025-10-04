@@ -24,7 +24,7 @@ for d in districts:
 print("\n" + "="*70)
 print("Testing normalization:")
 
-from normalizer import NormalizationConfig, normalize_text
+from archive.normalizer import NormalizationConfig, normalize_text
 
 sample_provinces = [{'Name': 'Hồ Chí Minh'}, {'Name': 'Hà Nội'}]
 config = NormalizationConfig(sample_provinces)
