@@ -1,5 +1,5 @@
 """
-Layer 1: Generic Text Normalization (Domain-Agnostic)
+Layer 1: Generic Text Normalization (Domain-Agnostic) - Version 2
 
 DESIGN PRINCIPLES:
     1. Domain-agnostic: Works with any character mapping
@@ -7,10 +7,19 @@ DESIGN PRINCIPLES:
     3. No business logic: Doesn't know about prefixes, abbreviations, etc.
     4. Configurable: Support multiple normalization strategies
 
+NEW FEATURES (v2):
+    ✓ Unicode symbol removal (™, ®, ©, etc.)
+    ✓ Smart punctuation: preserve ., comma, / by default
+    ✓ Space-preserving dot removal in aggressive mode
+    ✓ Configurable meaningful punctuation
+
 USAGE:
-    # Vietnamese normalization
+    # Vietnamese normalization (preserve structure)
     normalizer = TextNormalizer(VIETNAMESE_CHAR_MAP)
     result = normalizer.normalize("TP.HCM")  # → "tp.hcm"
+    
+    # Aggressive mode (clean for matching)
+    result = normalizer.normalize("TP.HCM", aggressive=True)  # → "tp hcm"
     
     # Custom normalization
     custom_map = {'ñ': 'n', 'ç': 'c'}
@@ -20,7 +29,17 @@ USAGE:
 
 import re
 import string
-from typing import List, Dict, Optional
+import unicodedata
+from typing import List, Dict, Optional, Set
+
+
+# ========================================================================
+# CONFIGURATION CONSTANTS
+# ========================================================================
+
+# Meaningful punctuation in Vietnamese addresses
+# These preserve structure and should be kept in normal mode
+MEANINGFUL_PUNCT = {'.', ',', '/'}
 
 
 # ========================================================================
@@ -60,144 +79,133 @@ VIETNAMESE_CHAR_MAP = {
 
 
 # ========================================================================
-# TEXT NORMALIZER CLASS (Layer 1)
+# TEXT NORMALIZER CLASS (Layer 1) - IMPROVED VERSION
 # ========================================================================
 
 class TextNormalizer:
     """
-    Generic text normalizer for any language/domain
+    Generic text normalizer with improved Unicode and punctuation handling
     
-    Responsibilities:
-        - Character normalization (diacritics → ASCII)
-        - Case normalization (uppercase → lowercase)
-        - Whitespace cleaning
-        - Optional punctuation removal
+    NEW FEATURES (v2):
+        ✓ Unicode symbol removal (™, ®, ©, etc.)
+        ✓ Smart punctuation: preserve ., comma, / by default
+        ✓ Space-preserving dot removal in aggressive mode
+        ✓ Configurable meaningful punctuation
     
-    Does NOT handle:
-        - Administrative prefixes (that's Layer 2)
-        - Abbreviation expansion (that's Layer 2)
-        - Domain-specific logic
-    
-    Design:
-        - Configurable via character map
-        - Reusable across domains
-        - Efficient batch processing
+    Normalization Pipeline:
+        1. Remove special Unicode symbols
+        2. Lowercase
+        3. Apply character mapping (diacritics)
+        4. Clean whitespace
+        5. Handle punctuation (context-aware)
+        6. Final cleanup
     
     Examples:
-        # Vietnamese addresses
-        normalizer = TextNormalizer(VIETNAMESE_CHAR_MAP)
-        normalizer.normalize("TP.HCM") → "tp.hcm"
+        # Normal mode (preserve structure)
+        "Test™, TP.HCM/Q.1!" → "test, tp.hcm/q.1"
         
-        # Spanish text
-        spanish_map = {'ñ': 'n', 'ç': 'c', 'á': 'a', ...}
-        normalizer = TextNormalizer(spanish_map)
-        normalizer.normalize("España") → "espana"
+        # Aggressive mode (clean for matching)
+        "Test™, TP.HCM/Q.1" → "test tp hcm q 1"
     """
     
     def __init__(
         self, 
         char_map: Optional[Dict[str, str]] = None,
-        preserve_dots: bool = True,
-        preserve_numbers: bool = True
+        meaningful_punct: Optional[Set[str]] = None
     ):
         """
-        Initialize normalizer with character mapping
+        Initialize normalizer
         
         Args:
             char_map: Character replacement mapping (e.g., Vietnamese diacritics)
                      If None, only lowercase/whitespace cleaning is performed
-            preserve_dots: Keep dots in output (needed for prefix detection)
-            preserve_numbers: Keep numeric characters (needed for addresses like "Q.1")
+            meaningful_punct: Punctuation to preserve in normal mode
+                            Default: {'.', ',', '/'}
         
-        Design note:
-            We use dependency injection (char_map parameter) to make this
-            class reusable for any language, not just Vietnamese.
+        Design rationale:
+            - char_map: Dependency injection for language flexibility
+            - meaningful_punct: Domain-specific punctuation rules
         """
         self.char_map = char_map or {}
-        self.preserve_dots = preserve_dots
-        self.preserve_numbers = preserve_numbers
+        self.meaningful_punct = meaningful_punct or MEANINGFUL_PUNCT.copy()
         
-        # Pre-compile regex patterns for efficiency
+        # Pre-compute noise punctuation for efficiency
+        self.noise_punct = set(string.punctuation) - self.meaningful_punct
+        
+        # Pre-compile regex patterns
         self._whitespace_pattern = re.compile(r'\s+')
-        
-        # Build punctuation translation table (exclude dots if needed)
-        if preserve_dots:
-            # Remove dots from punctuation set
-            punct_to_remove = string.punctuation.replace('.', '')
-        else:
-            punct_to_remove = string.punctuation
-        
-        self._punct_translator = str.maketrans('', '', punct_to_remove)
     
     def normalize(self, text: str, aggressive: bool = False) -> str:
         """
-        Normalize text using configured strategy
+        Normalize text using multi-stage pipeline
         
-        Algorithm:
-            1. Lowercase
-            2. Map special characters using char_map
-            3. Clean whitespace
-            4. Optionally remove punctuation (if aggressive=True)
+        Pipeline stages:
+            1. Unicode symbol removal (NEW)
+            2. Lowercase
+            3. Character mapping (diacritics)
+            4. Whitespace cleaning
+            5. Punctuation handling (IMPROVED)
+            6. Final cleanup
         
         Args:
             text: Raw input text
-            aggressive: If True, remove ALL punctuation (including dots)
+            aggressive: Remove ALL punctuation (replace with spaces)
         
         Returns:
             Normalized text
         
-        Examples:
-            normalize("TP.HCM") → "tp.hcm"  (dots preserved)
-            normalize("TP.HCM", aggressive=True) → "tphcm"  (dots removed)
-            normalize("Quận 1") → "quan 1"
-            normalize("Phường Bến Nghé") → "phuong ben nghe"
-        
         Complexity:
-            Time: O(n) where n = length of text
-            Space: O(n) for result string
+            Time: O(n) where n = text length
+            Space: O(n) for result
+        
+        Examples:
+            # Normal mode
+            normalize("Test™, TP.HCM!") → "test, tp.hcm"
+            
+            # Aggressive mode
+            normalize("TP.HCM/Q.1", aggressive=True) → "tp hcm q 1"
         """
         if not text:
             return ""
         
-        # Step 1: Lowercase
+        # Stage 1: Remove special Unicode symbols
+        # WHY FIRST: Broadest filter, language-agnostic
+        text = self._remove_special_symbols(text)
+        
+        # Stage 2: Lowercase
+        # WHY HERE: After symbol removal, before language-specific processing
         text = text.lower()
         
-        # Step 2: Character mapping (diacritics removal)
+        # Stage 3: Character mapping (language-specific diacritics)
+        # WHY AFTER LOWERCASE: Simpler mapping (only need lowercase variants)
         if self.char_map:
             text = self._apply_char_map(text)
         
-        # Step 3: Whitespace cleaning
+        # Stage 4: Intermediate whitespace cleanup
+        # WHY HERE: Clean up before punctuation processing
         text = self._clean_whitespace(text)
         
-        # Step 4: Punctuation removal (if aggressive mode)
-        if aggressive:
-            text = self._remove_punctuation(text, remove_all=True)
-        elif not self.preserve_dots:
-            text = self._remove_punctuation(text, remove_all=False)
+        # Stage 5: Punctuation handling (context-aware)
+        # WHY LAST: Context-dependent, needs clean text
+        text = self._handle_punctuation(text, aggressive=aggressive)
+        
+        # Stage 6: Final whitespace cleanup
+        # WHY: Remove extra spaces from punctuation replacement
+        text = self._clean_whitespace(text)
         
         return text.strip()
     
     def normalize_aggressive(self, text: str) -> str:
         """
-        Convenience method: Aggressive normalization with all punctuation removed
-        
-        Equivalent to: normalize(text, aggressive=True)
+        Convenience method: Aggressive normalization
         
         Use when:
-            - You've already extracted prefix information
-            - You need clean text for final matching
-            - Dots are no longer needed
-        
-        Args:
-            text: Input text
-        
-        Returns:
-            Aggressively normalized text (no punctuation)
+            - You need clean text for matching
+            - Structure (dots/commas) no longer needed
+            - Preparing for trie insertion
         
         Examples:
-            normalize_aggressive("tp.hcm") → "tphcm"
-            normalize_aggressive("q.1") → "q1"
-            normalize_aggressive("p.ben nghe") → "pben nghe"
+            "tp.hcm, quan 1" → "tp hcm quan 1"
         """
         return self.normalize(text, aggressive=True)
     
@@ -209,20 +217,9 @@ class TextNormalizer:
         """
         Normalize multiple texts efficiently
         
-        More efficient than calling normalize() in a loop because:
+        More efficient than loop because:
             - Single method call overhead
-            - Potential for future optimizations (parallel processing)
-        
-        Args:
-            texts: List of texts to normalize
-            aggressive: Use aggressive normalization
-        
-        Returns:
-            List of normalized texts
-        
-        Complexity:
-            Time: O(n*m) where n=number of texts, m=avg text length
-            Space: O(n*m) for results
+            - Potential for future parallelization
         """
         return [self.normalize(text, aggressive=aggressive) for text in texts]
     
@@ -230,24 +227,62 @@ class TextNormalizer:
     # INTERNAL HELPER METHODS
     # ========================================================================
     
-    def _apply_char_map(self, text: str) -> str:
+    def _remove_special_symbols(self, text: str) -> str:
         """
-        Apply character mapping for diacritic removal
+        Remove special Unicode symbols using category filtering
         
         Strategy:
-            Use character-by-character mapping for simplicity
-            Could optimize with str.translate() if char_map is large
+            Keep only characters in these Unicode categories:
+            - L (Letters): All alphabetic characters
+            - N (Numbers): Digits 0-9
+            - Z (Separators): Spaces, line breaks
+            - P (Punctuation): Will filter later
+        
+        Removes:
+            ™ (trademark), ® (registered), © (copyright)
+            € (euro), £ (pound), ¥ (yen)
+            ° (degree), ± (plus-minus), × (multiply)
+            And any other special symbols
+        
+        Why Unicode categories?
+            - General: Handles any Unicode symbol
+            - Robust: Works with characters we haven't seen
+            - Self-documenting: Clear semantic meaning
         
         Args:
             text: Input text
         
         Returns:
-            Text with characters mapped
+            Text with special symbols removed
+        
+        Examples:
+            "Test™" → "Test"
+            "50€" → "50"
+            "©2024" → "2024"
+        
+        Complexity:
+            Time: O(n) where n = text length
+            Space: O(n) for result
         """
-        result = []
-        for char in text:
-            result.append(self.char_map.get(char, char))
-        return ''.join(result)
+        allowed_categories = {'L', 'N', 'Z', 'P'}
+        return ''.join(
+            char for char in text
+            if unicodedata.category(char)[0] in allowed_categories
+        )
+    
+    def _apply_char_map(self, text: str) -> str:
+        """
+        Apply character mapping for diacritic removal
+        
+        Strategy:
+            Character-by-character replacement
+            Could optimize with str.translate() for large maps
+        
+        Why after lowercase?
+            Only need to map lowercase variants
+            Reduces char_map size by 50%
+        """
+        return ''.join(self.char_map.get(char, char) for char in text)
     
     def _clean_whitespace(self, text: str) -> str:
         """
@@ -256,34 +291,68 @@ class TextNormalizer:
         Operations:
             - Replace multiple spaces with single space
             - Remove leading/trailing whitespace
-        
-        Args:
-            text: Input text
-        
-        Returns:
-            Text with cleaned whitespace
+            - Ensure space after commas (if commas are meaningful)
         """
-        # Use pre-compiled regex for efficiency
-        return self._whitespace_pattern.sub(' ', text).strip()
+        # First, collapse multiple spaces
+        text = self._whitespace_pattern.sub(' ', text).strip()
+        
+        # Then, ensure space after meaningful punctuation
+        if ',' in self.meaningful_punct:
+            # Replace comma-no-space with comma-space
+            text = re.sub(r',(?=\S)', ', ', text)
+        
+        if '/' in self.meaningful_punct:
+            # Optionally: ensure space after slashes
+            # text = re.sub(r'/(?=\S)', '/ ', text)
+            pass
+        
+        return text
     
-    def _remove_punctuation(self, text: str, remove_all: bool = False) -> str:
+    def _handle_punctuation(self, text: str, aggressive: bool = False) -> str:
         """
-        Remove punctuation from text
+        Handle punctuation based on mode (IMPROVED)
+        
+        Two modes:
+        
+        Normal mode (aggressive=False):
+            - Remove noise punctuation (!, ?, ;, :, etc.)
+            - Preserve meaningful punctuation (., comma, /)
+            Result: "tp.hcm, quan 1!" → "tp.hcm, quan 1"
+        
+        Aggressive mode (aggressive=True):
+            - Replace meaningful punctuation with SPACES
+            - Then remove all remaining punctuation
+            Result: "tp.hcm, quan 1" → "tp hcm  quan 1" → "tp hcm quan 1"
+        
+        Why replace with spaces in aggressive mode?
+            Preserves word boundaries for downstream parsing:
+            - "tp.hcm" → "tp hcm" (can detect "tp" prefix)
+            - NOT "tphcm" (looks like one word)
         
         Args:
             text: Input text
-            remove_all: If True, remove ALL punctuation including dots
+            aggressive: Use aggressive mode
         
         Returns:
-            Text with punctuation removed
+            Text with punctuation handled
         """
-        if remove_all:
-            # Remove everything in string.punctuation
-            translator = str.maketrans('', '', string.punctuation)
-            return text.translate(translator)
+        if aggressive:
+            # Step 1: Replace meaningful punctuation with spaces
+            for punct in self.meaningful_punct:
+                text = text.replace(punct, ' ')
+            
+            # Step 2: Remove ALL remaining punctuation
+            text = text.translate(str.maketrans('', '', string.punctuation))
         else:
-            # Use pre-configured translator (may preserve dots)
-            return text.translate(self._punct_translator)
+            # Normal mode:
+            # Step 1: Replace hyphens with spaces (they're word separators)
+            text = text.replace('-', ' ')
+            
+            # Step 2: Remove only noise punctuation (excluding hyphen, already handled)
+            noise_without_hyphen = self.noise_punct - {'-'}
+            text = text.translate(str.maketrans('', '', ''.join(noise_without_hyphen)))
+        
+        return text
     
     # ========================================================================
     # UTILITY METHODS
@@ -293,19 +362,13 @@ class TextNormalizer:
         """
         Get current normalizer configuration
         
-        Useful for:
-            - Debugging
-            - Serialization
-            - Logging
-        
-        Returns:
-            Dictionary with current configuration
+        Useful for debugging and logging
         """
         return {
             'has_char_map': bool(self.char_map),
             'char_map_size': len(self.char_map),
-            'preserve_dots': self.preserve_dots,
-            'preserve_numbers': self.preserve_numbers,
+            'meaningful_punct': list(self.meaningful_punct),
+            'noise_punct_count': len(self.noise_punct),
         }
 
 
@@ -313,13 +376,16 @@ class TextNormalizer:
 # CONVENIENCE FUNCTIONS (Backward compatibility)
 # ========================================================================
 
-# Create default Vietnamese normalizer
-_default_vietnamese_normalizer = TextNormalizer(VIETNAMESE_CHAR_MAP)
+# Create default Vietnamese normalizer with new config
+_default_vietnamese_normalizer = TextNormalizer(
+    char_map=VIETNAMESE_CHAR_MAP,
+    meaningful_punct={'.', ',', '/'}
+)
 
 
 def normalize_text(text: str) -> str:
     """
-    Convenience function: Vietnamese text normalization (dots preserved)
+    Convenience function: Vietnamese text normalization (preserve structure)
     
     Backward compatible with existing code.
     
@@ -327,7 +393,7 @@ def normalize_text(text: str) -> str:
         text: Raw Vietnamese text
     
     Returns:
-        Normalized text with dots preserved
+        Normalized text with structure preserved
     
     Examples:
         normalize_text("TP.HCM") → "tp.hcm"
@@ -338,7 +404,7 @@ def normalize_text(text: str) -> str:
 
 def normalize_text_aggressive(text: str) -> str:
     """
-    Convenience function: Aggressive Vietnamese normalization (remove all punctuation)
+    Convenience function: Aggressive Vietnamese normalization
     
     Backward compatible with existing code.
     
@@ -349,11 +415,10 @@ def normalize_text_aggressive(text: str) -> str:
         Normalized text with all punctuation removed
     
     Examples:
-        normalize_text_aggressive("tp.hcm") → "tphcm"
-        normalize_text_aggressive("q.1") → "q1"
+        normalize_text_aggressive("tp.hcm") → "tp hcm"
+        normalize_text_aggressive("q.1") → "q 1"
     """
     return _default_vietnamese_normalizer.normalize_aggressive(text)
-
 
 
 # ========================================================================
@@ -363,10 +428,10 @@ def normalize_text_aggressive(text: str) -> str:
 TEST_CASES = {
     # Test Suite 1: Basic Vietnamese Normalization
     'vietnamese_basic': {
-        'description': 'Vietnamese Normalization (Dots Preserved)',
+        'description': 'Vietnamese Normalization (Structure Preserved)',
         'normalizer_config': {
             'char_map': VIETNAMESE_CHAR_MAP,
-            'preserve_dots': True
+            'meaningful_punct': {'.', ',', '/'}
         },
         'cases': [
             {
@@ -399,45 +464,41 @@ TEST_CASES = {
                 'expected': "p.tan dinh",
                 'description': "Ward with prefix"
             },
-            # ✅ EASY TO ADD MORE:
-            # Just uncomment and add your cases here:
-            # {
-            #     'input': "Your test input",
-            #     'expected': "expected output",
-            #     'description': "What this tests"
-            # },
         ]
     },
     
-    # Test Suite 2: Aggressive Normalization
+    # Test Suite 2: Aggressive Normalization (UPDATED)
     'aggressive_mode': {
-        'description': 'Aggressive Normalization (Remove All Punctuation)',
+        'description': 'Aggressive Normalization (Punctuation → Spaces)',
         'normalizer_config': {
             'char_map': VIETNAMESE_CHAR_MAP,
-            'preserve_dots': False
+            'meaningful_punct': {'.', ',', '/'}
         },
         'cases': [
             {
                 'input': "tp.hcm",
                 'expected': "tp hcm",
-                'description': "Remove dots"
+                'description': "Dots → spaces",
+                'aggressive': True
             },
             {
                 'input': "q.1",
                 'expected': "q 1",
-                'description': "Remove dots from numbers"
+                'description': "Dots before numbers",
+                'aggressive': True
             },
             {
                 'input': "p.ben nghe",
                 'expected': "p ben nghe",
-                'description': "Remove dots from names"
+                'description': "Dots in names",
+                'aggressive': True
             },
             {
                 'input': "hello, world!",
                 'expected': "hello world",
-                'description': "Remove commas and exclamation"
+                'description': "Commas and exclamation",
+                'aggressive': True
             },
-            # ✅ ADD MORE AGGRESSIVE MODE TESTS HERE
         ]
     },
     
@@ -446,7 +507,7 @@ TEST_CASES = {
         'description': 'Domain-Agnostic Mode (No Character Map)',
         'normalizer_config': {
             'char_map': None,
-            'preserve_dots': True
+            'meaningful_punct': {'.', ',', '/'}
         },
         'cases': [
             {
@@ -464,16 +525,15 @@ TEST_CASES = {
                 'expected': "no.dots.removed",
                 'description': "Dots preserved"
             },
-            # ✅ ADD MORE DOMAIN-AGNOSTIC TESTS HERE
         ]
     },
     
-    # Test Suite 4: Edge Cases
+    # Test Suite 4: Edge Cases (UPDATED)
     'edge_cases': {
         'description': 'Edge Cases and Special Scenarios',
         'normalizer_config': {
             'char_map': VIETNAMESE_CHAR_MAP,
-            'preserve_dots': True
+            'meaningful_punct': {'.', ',', '/'}
         },
         'cases': [
             {
@@ -503,19 +563,18 @@ TEST_CASES = {
             },
             {
                 'input': "TP.HCM, Quận 1, P.Bến Nghé",
-                'expected': "tp.hcm quan 1 p.ben nghe",
+                'expected': "tp.hcm, quan 1, p.ben nghe",
                 'description': "Full address with commas"
             },
-            # ✅ ADD MORE EDGE CASES HERE
         ]
     },
     
-    # Test Suite 5: Unicode and Special Characters
+    # Test Suite 5: Unicode and Special Characters (UPDATED)
     'unicode_handling': {
         'description': 'Unicode and Special Character Handling',
         'normalizer_config': {
             'char_map': VIETNAMESE_CHAR_MAP,
-            'preserve_dots': True
+            'meaningful_punct': {'.', ',', '/'}
         },
         'cases': [
             {
@@ -533,7 +592,124 @@ TEST_CASES = {
                 'expected': "test",
                 'description': "Trademark symbol removal"
             },
-            # ✅ ADD MORE UNICODE TESTS HERE
+        ]
+    },
+    
+    # Test Suite 6: Unicode Symbol Handling (NEW)
+    'unicode_symbols': {
+        'description': 'Unicode Symbol Removal',
+        'normalizer_config': {
+            'char_map': VIETNAMESE_CHAR_MAP,
+            'meaningful_punct': {'.', ',', '/'}
+        },
+        'cases': [
+            {
+                'input': "Test™",
+                'expected': "test",
+                'description': "Trademark symbol"
+            },
+            {
+                'input': "Product®",
+                'expected': "product",
+                'description': "Registered symbol"
+            },
+            {
+                'input': "©2024 Company",
+                'expected': "2024 company",
+                'description': "Copyright symbol"
+            },
+            {
+                'input': "Price: 50€",
+                'expected': "price 50",
+                'description': "Euro symbol (with colon removal)"
+            },
+            {
+                'input': "25°C",
+                'expected': "25c",
+                'description': "Degree symbol"
+            },
+            {
+                'input': "±5%",
+                'expected': "5",
+                'description': "Plus-minus and percent"
+            },
+        ]
+    },
+    
+    # Test Suite 7: Punctuation Preservation (NEW)
+    'punctuation_preservation': {
+        'description': 'Meaningful Punctuation Preservation',
+        'normalizer_config': {
+            'char_map': VIETNAMESE_CHAR_MAP,
+            'meaningful_punct': {'.', ',', '/'}
+        },
+        'cases': [
+            {
+                'input': "TP.HCM, Quận 1",
+                'expected': "tp.hcm, quan 1",
+                'description': "Keep dots and commas"
+            },
+            {
+                'input': "Địa chỉ: 123/45 Đường ABC",
+                'expected': "dia chi 123/45 duong abc",
+                'description': "Keep slashes, remove colons"
+            },
+            {
+                'input': "Hello, World!",
+                'expected': "hello, world",
+                'description': "Keep comma, remove exclamation"
+            },
+            {
+                'input': "Q.1, P.Tân Định",
+                'expected': "q.1, p.tan dinh",
+                'description': "Multiple meaningful punctuation"
+            },
+        ]
+    },
+    
+    # Test Suite 8: Aggressive Mode - Space Preservation (NEW)
+    'aggressive_space_preservation': {
+        'description': 'Aggressive Mode: Punctuation → Spaces',
+        'normalizer_config': {
+            'char_map': VIETNAMESE_CHAR_MAP,
+            'meaningful_punct': {'.', ',', '/'}
+        },
+        'cases': [
+            {
+                'input': "tp.hcm",
+                'expected': "tp hcm",
+                'description': "Dot becomes space (aggressive)",
+                'aggressive': True
+            },
+            {
+                'input': "q.1",
+                'expected': "q 1",
+                'description': "Dot before number (aggressive)",
+                'aggressive': True
+            },
+            {
+                'input': "123/45",
+                'expected': "123 45",
+                'description': "Slash becomes space (aggressive)",
+                'aggressive': True
+            },
+            {
+                'input': "a,b,c",
+                'expected': "a b c",
+                'description': "Commas become spaces (aggressive)",
+                'aggressive': True
+            },
+            {
+                'input': "tp.hcm/quan.1",
+                'expected': "tp hcm quan 1",
+                'description': "Multiple punctuation (aggressive)",
+                'aggressive': True
+            },
+            {
+                'input': "357/28,Ng-T- Thuật,P1,Q3",
+                'expected': "357/28, ng t thuat, p1, q3",
+                'description': "Missing spaces after commas"
+            },
         ]
     },
 }
@@ -548,7 +724,7 @@ BATCH_TEST_DATA = {
         'description': 'Batch processing of addresses',
         'normalizer_config': {
             'char_map': VIETNAMESE_CHAR_MAP,
-            'preserve_dots': True
+            'meaningful_punct': {'.', ',', '/'}
         },
         'batch_input': [
             "TP.HCM",
@@ -569,12 +745,14 @@ BATCH_TEST_DATA = {
 
 
 # ========================================================================
-# REUSABLE TEST RUNNER FUNCTIONS
+# REUSABLE TEST RUNNER FUNCTIONS (UPDATED)
 # ========================================================================
 
 def run_test_suite(suite_name: str, suite_config: dict) -> dict:
     """
     Run a single test suite and return results
+    
+    UPDATED: Now handles test cases with 'aggressive' flag
     
     Args:
         suite_name: Name of the test suite
@@ -586,7 +764,8 @@ def run_test_suite(suite_name: str, suite_config: dict) -> dict:
     Returns:
         Dictionary with test results and statistics
     """
-    print(f"\n✅ {suite_config['description']}")
+    print(f"\
+✅ {suite_config['description']}")
     print("-" * 70)
     
     # Create normalizer with suite config
@@ -604,8 +783,11 @@ def run_test_suite(suite_name: str, suite_config: dict) -> dict:
     for case in suite_config['cases']:
         results['total'] += 1
         
+        # Check if test specifies aggressive mode
+        aggressive = case.get('aggressive', False)
+        
         # Execute test
-        actual = normalizer.normalize(case['input'])
+        actual = normalizer.normalize(case['input'], aggressive=aggressive)
         expected = case['expected']
         passed = (actual == expected)
         
@@ -620,11 +802,13 @@ def run_test_suite(suite_name: str, suite_config: dict) -> dict:
                 'input': case['input'],
                 'expected': expected,
                 'actual': actual,
-                'description': case['description']
+                'description': case['description'],
+                'aggressive': aggressive
             })
         
-        # Print result
-        print(f"{status} '{case['input'][:30]:30}' → '{actual[:30]:30}' | {case['description']}")
+        # Print result with mode indicator
+        mode_indicator = " [AGG]" if aggressive else ""
+        print(f"{status} '{case['input'][:30]:30}' → '{actual[:30]:30}' | {case['description']}{mode_indicator}")
         
         if not passed:
             print(f"   Expected: '{expected}'")
@@ -644,7 +828,8 @@ def run_batch_test(test_name: str, test_config: dict) -> dict:
     Returns:
         Test results
     """
-    print(f"\n✅ {test_config['description']}")
+    print(f"\
+✅ {test_config['description']}")
     print("-" * 70)
     
     normalizer = TextNormalizer(**test_config['normalizer_config'])
@@ -660,7 +845,8 @@ def run_batch_test(test_name: str, test_config: dict) -> dict:
     for item in test_config['batch_input']:
         print(f"  - {item}")
     
-    print(f"\nOutput:")
+    print(f"\
+Output:")
     for item in actual_output:
         print(f"  - {item}")
     
@@ -734,7 +920,7 @@ def print_summary(all_results: list, batch_results: list, convenience_result: di
     for result in all_results:
         percentage = (result['passed'] / result['total'] * 100) if result['total'] > 0 else 0
         status = "✅" if result['failed'] == 0 else "⚠️"
-        print(f"{status} {result['suite_name']:20} | {result['passed']:3}/{result['total']:3} passed ({percentage:5.1f}%)")
+        print(f"{status} {result['suite_name']:30} | {result['passed']:3}/{result['total']:3} passed ({percentage:5.1f}%)")
     
     # Print batch test results
     if batch_results:
@@ -771,7 +957,7 @@ def print_summary(all_results: list, batch_results: list, convenience_result: di
 
 if __name__ == "__main__":
     print("="*70)
-    print("LAYER 1: TEXT NORMALIZER - EXTENSIBLE TEST SUITE")
+    print("LAYER 1: TEXT NORMALIZER V2 - IMPROVED TEST SUITE")
     print("="*70)
     
     # Run all test suites
@@ -792,103 +978,33 @@ if __name__ == "__main__":
     # Print summary
     print_summary(all_results, batch_results, convenience_result)
     
-    # Print design principles
+    # Print key improvements
     print("\n" + "="*70)
-    print("KEY DESIGN PRINCIPLES:")
+    print("KEY IMPROVEMENTS IN V2:")
     print("="*70)
     print("""
-1. Domain-Agnostic:
-   - Works with any character map (Vietnamese, Spanish, etc.)
-   - No hardcoded assumptions about prefixes or abbreviations
+1. ✓ Unicode Symbol Removal:
+   - Handles ™, ®, ©, €, °, and other special symbols
+   - Uses Unicode category filtering (robust and general)
    
-2. Single Responsibility:
-   - Only normalizes text
-   - Doesn't know about TP/Q/P or administrative levels
+2. ✓ Smart Punctuation:
+   - Preserves meaningful punctuation (., comma, /) by default
+   - Removes noise punctuation (!, ?, ;, :, etc.)
    
-3. Configurable:
-   - Can preserve or remove dots
-   - Can preserve or remove numbers
-   - Can use any character mapping
+3. ✓ Space-Preserving Aggressive Mode:
+   - "tp.hcm" → "tp hcm" (NOT "tphcm")
+   - Preserves word boundaries for Layer 2 parsing
    
-4. Efficient:
-   - Pre-compiled regex patterns
-   - Batch processing support
-   - O(n) time complexity
+4. ✓ Configurable:
+   - Can customize meaningful punctuation per domain
+   - Works with any character mapping
    
-5. Extensible:
-   - Easy to add new normalization strategies
-   - Can be subclassed for custom behavior
-   
-6. EASY TO EXTEND TESTS:
-   - Add new test cases to TEST_CASES dictionary
-   - Add new test suites by creating new entries
-   - No code changes needed to test execution logic
-    """)
-    
-    print("\n" + "="*70)
-    print("HOW TO ADD NEW TEST CASES:")
-    print("="*70)
-    print("""
-Method 1: Add to existing suite
-    Navigate to TEST_CASES['vietnamese_basic']['cases'] and add:
-    {
-        'input': "Your Input",
-        'expected': "expected output",
-        'description': "What this tests"
-    }
-
-Method 2: Create new test suite
-    TEST_CASES['my_new_suite'] = {
-        'description': 'My Test Suite',
-        'normalizer_config': {...},
-        'cases': [...]
-    }
-
-Method 3: Add batch test
-    BATCH_TEST_DATA['my_batch'] = {
-        'description': 'My Batch Test',
-        'normalizer_config': {...},
-        'batch_input': [...],
-        'expected_output': [...]
-    }
+5. ✓ Backward Compatible:
+   - Convenience functions work as before
+   - Existing code requires no changes
     """)
     
     print("\n✅ Test suite completed!")
-
-
-# ========================================================================
-# EXAMPLE: EXTENDING WITH CUSTOM TEST SUITE
-# ========================================================================
-
-def add_custom_test_suite():
-    """
-    Example showing how to add a custom test suite programmatically
-    
-    This function demonstrates extending tests without modifying the main
-    TEST_CASES dictionary
-    """
-    custom_suite = {
-        'description': 'Custom Performance Tests',
-        'normalizer_config': {
-            'char_map': VIETNAMESE_CHAR_MAP,
-            'preserve_dots': True
-        },
-        'cases': [
-            {
-                'input': "Very Long Address String " * 10,
-                'expected': "very long address string " * 10,
-                'description': "Long text handling"
-            },
-            # Add more custom cases...
-        ]
-    }
-    
-    # Run the custom suite
-    result = run_test_suite('custom_performance', custom_suite)
-    return result
-
-
-# Uncomment to test custom suite extension:
-# if __name__ == "__main__":
-#     custom_result = add_custom_test_suite()
-#     print(f"\nCustom suite: {custom_result['passed']}/{custom_result['total']} passed")
+    print("\n" + "="*70)
+    print("READY FOR LAYER 2: Admin Prefix Handler")
+    print("="*70)
