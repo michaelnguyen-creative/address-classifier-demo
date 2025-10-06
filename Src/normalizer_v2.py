@@ -2,172 +2,299 @@
 Vietnamese Address Text Normalization v2 - Clean Separation of Concerns
 
 ARCHITECTURE:
-    Layer 1: Generic normalization (domain-agnostic)
-    Layer 2: Admin prefix handling (Vietnamese-specific) 
-    Layer 3: Alias generation (for trie insertion)
+    Layer 1: Generic normalization (domain-agnostic) - IMPROVED
+    Layer 2: Admin prefix handling (Vietnamese-specific)
 
 DESIGN PRINCIPLE:
     Each layer has single responsibility and doesn't know about other layers
 
-FLOW:
+NORMALIZATION PIPELINE:
     "TP.HCM, Quận 1"
-    → [Layer 1] → "tp.hcm, quan 1"  (lowercase, remove diacritics, KEEP dots)
+    → [Layer 1] → "tp.hcm, quan 1"  (lowercase, remove diacritics, preserve structure)
     → [Layer 2] → "ho chi minh", "1"  (expand prefixes, extract core)
-    → [Layer 3] → ["ho chi minh", "hcm", ...], ["1"]  (generate aliases)
+    → Output: Clean entity names ready for use
+
+SEPARATE SYSTEM (not in this module):
+    TRIE DATABASE:
+    Clean names → [Alias Generator] → Multiple search keys → Insert into trie
+
+NEW IN V2:
+    ✓ Unicode symbol removal (™, ®, ©, etc.)
+    ✓ Smart punctuation (preserve ., comma, / by default)
+    ✓ Space-preserving aggressive mode
+    ✓ Hyphen handling (word separator)
+    ✓ Comma-space normalization
+    ✓ Layer 2 integration (admin prefix handling)
 """
 
-import re
-import string
-from typing import List, Set
+# Import Layer 1: Text Normalizer
+from text_normalizer import (
+    TextNormalizer,
+    normalize_text,
+    normalize_text_aggressive,
+)
+
+# Import Layer 2: Admin Prefix Handler
+from admin_prefix_handler import (
+    AdminPrefixHandler,
+    expand_province,
+    expand_district,
+    expand_ward,
+)
+
+from typing import Dict, Optional, List
 
 
 # ========================================================================
-# VIETNAMESE CHARACTER MAPPING (Domain-specific but pure data)
+# LAYER 1 + LAYER 2: UNIFIED PIPELINE
 # ========================================================================
 
-VIETNAMESE_CHAR_MAP = {
-    # Lowercase vowels with tones
-    'à': 'a', 'á': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
-    'ă': 'a', 'ằ': 'a', 'ắ': 'a', 'ẳ': 'a', 'ẵ': 'a', 'ặ': 'a',
-    'â': 'a', 'ầ': 'a', 'ấ': 'a', 'ẩ': 'a', 'ẫ': 'a', 'ậ': 'a',
-    'đ': 'd',
-    'è': 'e', 'é': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
-    'ê': 'e', 'ề': 'e', 'ế': 'e', 'ể': 'e', 'ễ': 'e', 'ệ': 'e',
-    'ì': 'i', 'í': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
-    'ò': 'o', 'ó': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
-    'ô': 'o', 'ồ': 'o', 'ố': 'o', 'ổ': 'o', 'ỗ': 'o', 'ộ': 'o',
-    'ơ': 'o', 'ờ': 'o', 'ớ': 'o', 'ở': 'o', 'ỡ': 'o', 'ợ': 'o',
-    'ù': 'u', 'ú': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
-    'ư': 'u', 'ừ': 'u', 'ứ': 'u', 'ử': 'u', 'ữ': 'u', 'ự': 'u',
-    'ỳ': 'y', 'ý': 'y', 'ỷ': 'y', 'ỹ': 'y', 'ỵ': 'y',
-    # Uppercase
-    'À': 'a', 'Á': 'a', 'Ả': 'a', 'Ã': 'a', 'Ạ': 'a',
-    'Ă': 'a', 'Ằ': 'a', 'Ắ': 'a', 'Ẳ': 'a', 'Ẵ': 'a', 'Ặ': 'a',
-    'Â': 'a', 'Ầ': 'a', 'Ấ': 'a', 'Ẩ': 'a', 'Ẫ': 'a', 'Ậ': 'a',
-    'Đ': 'd',
-    'È': 'e', 'É': 'e', 'Ẻ': 'e', 'Ẽ': 'e', 'Ẹ': 'e',
-    'Ê': 'e', 'Ề': 'e', 'Ế': 'e', 'Ể': 'e', 'Ễ': 'e', 'Ệ': 'e',
-    'Ì': 'i', 'Í': 'i', 'Ỉ': 'i', 'Ĩ': 'i', 'Ị': 'i',
-    'Ò': 'o', 'Ó': 'o', 'Ỏ': 'o', 'Õ': 'o', 'Ọ': 'o',
-    'Ô': 'o', 'Ồ': 'o', 'Ố': 'o', 'Ổ': 'o', 'Ỗ': 'o', 'Ộ': 'o',
-    'Ơ': 'o', 'Ờ': 'o', 'Ớ': 'o', 'Ở': 'o', 'Ỡ': 'o', 'Ợ': 'o',
-    'Ù': 'u', 'Ú': 'u', 'Ủ': 'u', 'Ũ': 'u', 'Ụ': 'u',
-    'Ư': 'u', 'Ừ': 'u', 'Ứ': 'u', 'Ử': 'u', 'Ữ': 'u', 'Ự': 'u',
-    'Ỳ': 'y', 'Ý': 'y', 'Ỷ': 'y', 'Ỹ': 'y', 'Ỵ': 'y',
-}
-
-
-# ========================================================================
-# LAYER 1: GENERIC TEXT NORMALIZATION (Domain-Agnostic)
-# ========================================================================
-
-def normalize_text(text: str) -> str:
+class AddressNormalizer:
     """
-    Layer 1: Generic text normalization
+    Unified pipeline combining Layer 1 (text normalization) and Layer 2 (prefix handling)
     
-    Operations:
-        1. Lowercase
-        2. Remove Vietnamese diacritics
-        3. Clean whitespace
-        4. PRESERVE dots (needed for Layer 2)
+    This is the main entry point for address normalization.
     
-    DOES NOT:
-        - Know about TP, Q, P, etc. (that's Layer 2)
-        - Remove administrative prefixes
-        - Expand abbreviations
+    Pipeline:
+        Raw address → Layer 1 (normalize) → Layer 2 (expand prefixes) → Clean components
     
-    Examples:
-        "TP.HCM" → "tp.hcm"  (lowercase, keep dots!)
-        "Quận 1" → "quan 1"  (remove diacritics)
-        "Phường Bến Nghé" → "phuong ben nghe"
-    
-    Args:
-        text: Raw input text
-    
-    Returns:
-        Normalized text with dots preserved
+    Example:
+        normalizer = AddressNormalizer(data_dir="../data")
+        result = normalizer.process_address("TP.HCM, Quận 1, P.Bến Nghé")
+        # result = {
+        #     'raw': 'TP.HCM, Quận 1, P.Bến Nghé',
+        #     'normalized': 'tp.hcm, quan 1, p.ben nghe',
+        #     'components': {
+        #         'city': 'ho chi minh',
+        #         'district': '1',
+        #         'ward': 'ben nghe'
+        #     }
+        # }
     """
-    # Step 1: Lowercase
-    text = text.lower()
     
-    # Step 2: Map Vietnamese characters to ASCII
-    result = []
-    for char in text:
-        result.append(VIETNAMESE_CHAR_MAP.get(char, char))
-    text = ''.join(result)
+    def __init__(self, data_dir: Optional[str] = None):
+        """
+        Initialize the unified normalizer
+        
+        Args:
+            data_dir: Path to data directory for abbreviation expansion
+        """
+        # Layer 1: Text normalizer (with Vietnamese defaults)
+        self.text_normalizer = TextNormalizer()
+        
+        # Layer 2: Admin prefix handler
+        self.prefix_handler = AdminPrefixHandler(data_dir=data_dir)
     
-    # Step 3: Clean whitespace (but preserve structure)
-    text = ' '.join(text.split())
+    def normalize_only(self, text: str, aggressive: bool = False) -> str:
+        """
+        Layer 1 only: Normalize text without expanding prefixes
+        
+        Args:
+            text: Raw address text
+            aggressive: Use aggressive mode
+        
+        Returns:
+            Normalized text
+        
+        Example:
+            normalize_only("TP.HCM") → "tp.hcm"
+        """
+        return self.text_normalizer.normalize(text, aggressive=aggressive)
     
-    return text.strip()
-
-
-def normalize_text_aggressive(text: str) -> str:
-    """
-    Layer 1 variant: More aggressive normalization
+    def expand_only(self, normalized_text: str, level: str = 'auto') -> str:
+        """
+        Layer 2 only: Expand prefixes from already-normalized text
+        
+        Args:
+            normalized_text: Text that's already been through Layer 1
+            level: 'province', 'district', 'ward', or 'auto'
+        
+        Returns:
+            Expanded entity name
+        
+        Example:
+            expand_only("tp.hcm", 'province') → "ho chi minh"
+        """
+        return self.prefix_handler.expand(normalized_text, level=level)
     
-    Additional operations:
-        - Remove ALL punctuation (including dots)
-        - More aggressive whitespace cleaning
+    def process(self, text: str, level: str = 'auto') -> str:
+        """
+        Full pipeline: Layer 1 + Layer 2
+        
+        Args:
+            text: Raw address text
+            level: Administrative level
+        
+        Returns:
+            Fully processed entity name
+        
+        Example:
+            process("TP.HCM", 'province') → "ho chi minh"
+            process("Quận 1", 'district') → "1"
+        """
+        # Step 1: Normalize (Layer 1)
+        normalized = self.text_normalizer.normalize(text)
+        
+        # Step 2: Expand prefixes (Layer 2)
+        expanded = self.prefix_handler.expand(normalized, level=level)
+        
+        return expanded
     
-    Use when:
-        - You've already extracted prefix information
-        - You need clean text for final matching
+    def process_address(self, address: str, separator: str = ',') -> Dict[str, any]:
+        """
+        Process a full hierarchical address
+        
+        Args:
+            address: Full address string (e.g., "TP.HCM, Quận 1, P.Bến Nghé")
+            separator: Component separator (default: comma)
+        
+        Returns:
+            Dictionary with processed components
+        
+        Example:
+            process_address("TP.HCM, Quận 1, P.Bến Nghé")
+            → {
+                'raw': 'TP.HCM, Quận 1, P.Bến Nghé',
+                'normalized': 'tp.hcm, quan 1, p.ben nghe',
+                'components': {
+                    'city': 'ho chi minh',
+                    'district': '1',
+                    'ward': 'ben nghe'
+                },
+                'levels': ['province', 'district', 'ward']
+            }
+        """
+        # Step 1: Normalize the entire address (Layer 1)
+        normalized = self.text_normalizer.normalize(address)
+        
+        # Step 2: Split into components
+        parts = [p.strip() for p in normalized.split(separator) if p.strip()]
+        
+        # Step 3: Detect levels and expand (Layer 2)
+        components = {}
+        levels = []
+        
+        if len(parts) >= 1:
+            # First part is likely city/province
+            components['city'] = self.prefix_handler.expand(parts[0], level='province')
+            levels.append('province')
+        
+        if len(parts) >= 2:
+            # Second part is likely district
+            components['district'] = self.prefix_handler.expand(parts[1], level='district')
+            levels.append('district')
+        
+        if len(parts) >= 3:
+            # Third part is likely ward
+            components['ward'] = self.prefix_handler.expand(parts[2], level='ward')
+            levels.append('ward')
+        
+        return {
+            'raw': address,
+            'normalized': normalized,
+            'components': components,
+            'levels': levels
+        }
     
-    Examples:
-        "tp.hcm" → "tphcm"
-        "q.1" → "q1"
-    
-    Args:
-        text: Partially normalized text
-    
-    Returns:
-        Fully cleaned text
-    """
-    # Start with basic normalization
-    text = normalize_text(text)
-    
-    # Remove ALL punctuation
-    text = text.translate(str.maketrans('', '', string.punctuation))
-    
-    # Aggressive whitespace cleaning
-    text = re.sub(r'\s+', ' ', text).strip()
-    
-    return text
+    def batch_process(self, texts: List[str], level: str = 'auto') -> List[str]:
+        """
+        Process multiple texts efficiently
+        
+        Args:
+            texts: List of address texts
+            level: Administrative level
+        
+        Returns:
+            List of processed texts
+        """
+        return [self.process(text, level) for text in texts]
 
 
 # ========================================================================
-# TEST DATA (Easily Extensible)
+# CONVENIENCE FUNCTIONS FOR FULL PIPELINE
+# ========================================================================
+
+def process_province(text: str, data_dir: Optional[str] = None) -> str:
+    """
+    Convenience: Full pipeline for province-level addresses
+    
+    Example:
+        process_province("TP.HCM") → "ho chi minh"
+    """
+    normalizer = AddressNormalizer(data_dir=data_dir)
+    return normalizer.process(text, level='province')
+
+
+def process_district(text: str, data_dir: Optional[str] = None) -> str:
+    """
+    Convenience: Full pipeline for district-level addresses
+    
+    Example:
+        process_district("Quận 1") → "1"
+    """
+    normalizer = AddressNormalizer(data_dir=data_dir)
+    return normalizer.process(text, level='district')
+
+
+def process_ward(text: str, data_dir: Optional[str] = None) -> str:
+    """
+    Convenience: Full pipeline for ward-level addresses
+    
+    Example:
+        process_ward("P.Bến Nghé") → "ben nghe"
+    """
+    normalizer = AddressNormalizer(data_dir=data_dir)
+    return normalizer.process(text, level='ward')
+
+
+def process_full_address(address: str, data_dir: Optional[str] = None) -> Dict[str, any]:
+    """
+    Convenience: Process a complete hierarchical address
+    
+    Example:
+        process_full_address("TP.HCM, Quận 1, P.Bến Nghé")
+        → {
+            'city': 'ho chi minh',
+            'district': '1',
+            'ward': 'ben nghe'
+        }
+    """
+    normalizer = AddressNormalizer(data_dir=data_dir)
+    return normalizer.process_address(address)
+
+
+# ========================================================================
+# TEST DATA (Updated for V2 features)
 # ========================================================================
 
 TEST_SUITES = {
-    # Suite 1: Basic normalization with dot preservation
+    # Suite 1: Basic normalization with structure preservation
     'basic_normalization': {
         'function': normalize_text,
-        'description': 'normalize_text() - PRESERVES DOTS',
+        'description': 'normalize_text() - PRESERVES STRUCTURE',
         'cases': [
-            # (input, expected_output, description)
             ("TP.HCM", "tp.hcm", "Keep dots for Layer 2"),
             ("Quận 1", "quan 1", "Remove diacritics"),
             ("Phường Bến Nghé", "phuong ben nghe", "Full normalization"),
             ("THÀNH PHỐ HỒ CHÍ MINH", "thanh pho ho chi minh", "Uppercase + diacritics"),
             ("  Multiple   Spaces  ", "multiple spaces", "Whitespace cleaning"),
             ("P.Tân Định", "p.tan dinh", "Ward with prefix"),
-            # ✅ ADD MORE BASIC TESTS HERE:
-            # ("Your Input", "expected output", "What this tests"),
+            ("357/28,Ng-T- Thuật", "357/28, ng t thuat", "Comma-space + hyphen handling"),
+            ("Test™ Product®", "test product", "Unicode symbol removal"),
         ]
     },
     
     # Suite 2: Aggressive normalization (removes all punctuation)
     'aggressive_normalization': {
         'function': normalize_text_aggressive,
-        'description': 'normalize_text_aggressive() - REMOVES DOTS',
+        'description': 'normalize_text_aggressive() - REMOVES ALL PUNCT',
         'cases': [
-            ("tp.hcm", "tp hcm", "Remove dots"),
-            ("q.1", "q 1", "Remove dots from numbers"),
-            ("p.ben nghe", "p ben nghe", "Remove dots from names"),
-            ("hello, world!", "hello world", "Remove commas and exclamation"),
-            # ✅ ADD MORE AGGRESSIVE TESTS HERE:
+            ("tp.hcm", "tp hcm", "Dots → spaces"),
+            ("q.1", "q 1", "Preserve word boundaries"),
+            ("p.ben nghe", "p ben nghe", "Multiple components"),
+            ("hello, world!", "hello world", "Remove commas"),
+            ("357/28,Ng-T- Thuật", "357 28 ng t thuat", "Real-world messy address"),
+            ("TP.HCM/Q.1", "tp hcm q 1", "Multiple separators"),
         ]
     },
     
@@ -180,8 +307,9 @@ TEST_SUITES = {
             ("   ", "", "Only whitespace"),
             ("123", "123", "Numbers only"),
             ("a", "a", "Single character"),
-            ("TP.HCM, Quận 1, P.Bến Nghé", "tp.hcm, quan 1, p.ben nghe", "Full address with commas"),
-            # ✅ ADD MORE EDGE CASES HERE:
+            ("TP.HCM, Quận 1, P.Bến Nghé", "tp.hcm, quan 1, p.ben nghe", "Full address"),
+            ("!!!??", "", "Noise punctuation only"),
+            ("357/28", "357/28", "Slash preserved in normal mode"),
         ]
     },
     
@@ -190,10 +318,24 @@ TEST_SUITES = {
         'function': normalize_text,
         'description': 'Unicode and Special Character Handling',
         'cases': [
-            ("Đường Nguyễn Huệ", "duong nguyen hue", "Vietnamese Đ character"),
-            ("Huyện Củ Chi", "huyen cu chi", "Vietnamese Ủ character"),
-            ("Thị Xã Thuận An", "thi xa thuan an", "Multiple diacritics"),
-            # ✅ ADD MORE UNICODE TESTS HERE:
+            ("Đường Nguyễn Huệ", "duong nguyen hue", "Vietnamese Đ"),
+            ("Huyện Củ Chi", "huyen cu chi", "Vietnamese Ủ"),
+            ("Test™", "test", "Trademark symbol"),
+            ("Price: 50€", "price 50", "Euro symbol + colon"),
+            ("25°C", "25c", "Degree symbol"),
+            ("©2024 Company", "2024 company", "Copyright symbol"),
+        ]
+    },
+    
+    # Suite 5: Punctuation behavior
+    'punctuation_handling': {
+        'function': normalize_text,
+        'description': 'Meaningful vs Noise Punctuation',
+        'cases': [
+            ("Hello, World!", "hello, world", "Keep comma, remove exclamation"),
+            ("TP.HCM/Q.1", "tp.hcm/q.1", "Keep dots and slashes"),
+            ("What? Why! How:", "what why how", "Remove question/exclamation/colon"),
+            ("123-456-789", "123 456 789", "Hyphens become spaces"),
         ]
     },
 }
@@ -206,18 +348,8 @@ TEST_SUITES = {
 def run_test_suite(suite_name: str, suite_config: dict) -> dict:
     """
     Run a single test suite and return results
-    
-    Args:
-        suite_name: Name of the test suite
-        suite_config: Configuration containing:
-            - function: Function to test
-            - description: Suite description
-            - cases: List of (input, expected, description) tuples
-    
-    Returns:
-        Dictionary with test results and statistics
     """
-    print(f"\n{suite_config['description']}")
+    print(f"\n✅ {suite_config['description']}")
     print("-" * 70)
     
     results = {
@@ -264,9 +396,6 @@ def run_test_suite(suite_name: str, suite_config: dict) -> dict:
 def print_test_summary(all_results: list):
     """
     Print comprehensive test summary with statistics
-    
-    Args:
-        all_results: List of test suite results
     """
     print("\n" + "="*70)
     print("TEST SUMMARY")
@@ -283,7 +412,7 @@ def print_test_summary(all_results: list):
     for result in all_results:
         percentage = (result['passed'] / result['total'] * 100) if result['total'] > 0 else 0
         status = "✅" if result['failed'] == 0 else "⚠️"
-        print(f"{status} {result['suite_name']:25} | {result['passed']:3}/{result['total']:3} passed ({percentage:5.1f}%)")
+        print(f"{status} {result['suite_name']:30} | {result['passed']:3}/{result['total']:3} passed ({percentage:5.1f}%)")
     
     # Overall summary
     print("\n" + "="*70)
@@ -312,7 +441,7 @@ def print_test_summary(all_results: list):
 
 if __name__ == "__main__":
     print("="*70)
-    print("LAYER 1: GENERIC NORMALIZATION TESTS")
+    print("LAYER 1: IMPROVED TEXT NORMALIZATION - INTEGRATION TESTS")
     print("="*70)
     
     # Run all test suites
@@ -326,26 +455,52 @@ if __name__ == "__main__":
     
     # Print design principles
     print("\n" + "="*70)
-    print("KEY PRINCIPLE: Layer 1 is DOMAIN-AGNOSTIC")
+    print("KEY IMPROVEMENTS IN V2:")
     print("="*70)
     print("""
-Layer 1 (normalize_text):
-  ✅ DOES: lowercase, remove diacritics, clean whitespace
-  ❌ DOES NOT: know about TP/Q/P, expand abbreviations, remove prefixes
-  
-Why preserve dots?
-  - Layer 2 needs them to detect "TP.", "Q.", "P."
-  - Removing dots too early destroys information
-  - Separation of concerns: Layer 1 = generic, Layer 2 = domain-specific
+1. ✓ Unicode Symbol Removal:
+   - Handles ™, ®, ©, €, °, and other special symbols
+   - Uses Unicode category filtering (robust and general)
+   
+2. ✓ Smart Punctuation:
+   - Preserves meaningful punctuation (., comma, /) by default
+   - Removes noise punctuation (!, ?, ;, :, etc.)
+   - Hyphens treated as word separators
+   
+3. ✓ Space-Preserving Aggressive Mode:
+   - "tp.hcm" → "tp hcm" (NOT "tphcm")
+   - Preserves word boundaries for downstream parsing
+   
+4. ✓ Comma-Space Normalization:
+   - "357/28,Ng" → "357/28, ng"
+   - Fixes missing spaces in messy addresses
+   
+5. ✓ Two-Mode Design:
+   - Normal mode: For parsing (preserve structure)
+   - Aggressive mode: For matching (remove all punctuation)
 
-HOW TO ADD NEW TESTS:
-  1. Navigate to TEST_SUITES dictionary above
-  2. Find the appropriate suite (or create a new one)
-  3. Add a tuple: ("input", "expected", "description")
-  4. Run this file to see your test executed!
-  
-Example:
-  TEST_SUITES['basic_normalization']['cases'].append(
-      ("Thành Phố Cần Thơ", "thanh pho can tho", "Can Tho city")
-  )
+WHEN TO USE WHICH MODE:
+   - normalize_text() → When you need to PARSE (Layer 2 needs structure)
+   - normalize_text_aggressive() → When you need to MATCH (trie/fuzzy search)
+
+HOW TO USE THIS MODULE:
+   from normalizer_v2 import AddressNormalizer, process_full_address
+   
+   # Option 1: Full pipeline (most common)
+   normalizer = AddressNormalizer(data_dir="../data")
+   result = normalizer.process("TP.HCM", level='province')  # → "ho chi minh"
+   
+   # Option 2: Full address parsing
+   result = process_full_address("TP.HCM, Quận 1, P.Bến Nghé", data_dir="../data")
+   # → {'city': 'ho chi minh', 'district': '1', 'ward': 'ben nghe'}
+   
+   # Option 3: Layer-by-layer control
+   normalized = normalizer.normalize_only("TP.HCM")  # → "tp.hcm"
+   expanded = normalizer.expand_only("tp.hcm", 'province')  # → "ho chi minh"
+
+NOTE: Alias generation for trie database is in a separate module (not here).
     """)
+    
+    print("\n" + "="*70)
+    print("READY FOR LAYER 2: Admin Prefix Handler")
+    print("="*70)

@@ -14,17 +14,23 @@ NEW FEATURES (v2):
     ✓ Configurable meaningful punctuation
 
 USAGE:
-    # Vietnamese normalization (preserve structure)
-    normalizer = TextNormalizer(VIETNAMESE_CHAR_MAP)
+    # Option 1: Vietnamese normalization (default - no config needed!)
+    normalizer = TextNormalizer()  # Uses Vietnamese defaults
     result = normalizer.normalize("TP.HCM")  # → "tp.hcm"
-    
-    # Aggressive mode (clean for matching)
     result = normalizer.normalize("TP.HCM", aggressive=True)  # → "tp hcm"
     
-    # Custom normalization
-    custom_map = {'ñ': 'n', 'ç': 'c'}
-    normalizer = TextNormalizer(custom_map)
-    result = normalizer.normalize("España")  # → "espana"
+    # Option 2: Use convenience functions
+    from text_normalizer import normalize_text, normalize_text_aggressive
+    result = normalize_text("TP.HCM")  # → "tp.hcm"
+    result = normalize_text_aggressive("TP.HCM")  # → "tp hcm"
+    
+    # Option 3: Custom language
+    spanish = TextNormalizer(char_map={'ñ': 'n', 'á': 'a'}, use_vietnamese_defaults=False)
+    result = spanish.normalize("España")  # → "espana"
+    
+    # Option 4: Domain-agnostic (no diacritics)
+    generic = TextNormalizer(use_vietnamese_defaults=False)
+    result = generic.normalize("Hello World")  # → "hello world"
 """
 
 import re
@@ -37,9 +43,14 @@ from typing import List, Dict, Optional, Set
 # CONFIGURATION CONSTANTS
 # ========================================================================
 
-# Meaningful punctuation in Vietnamese addresses
-# These preserve structure and should be kept in normal mode
-MEANINGFUL_PUNCT = {'.', ',', '/'}
+# Structural punctuation preserved in normal mode (meaningful for parsing)
+STRUCTURAL_PUNCT = {'.', ',', '/'}
+
+# Word separators always replaced with spaces (preserve word boundaries)
+WORD_SEPARATORS = {'-'}
+
+# Combined: all punctuation with semantic meaning
+MEANINGFUL_PUNCT = STRUCTURAL_PUNCT | WORD_SEPARATORS
 
 
 # ========================================================================
@@ -91,6 +102,7 @@ class TextNormalizer:
         ✓ Smart punctuation: preserve ., comma, / by default
         ✓ Space-preserving dot removal in aggressive mode
         ✓ Configurable meaningful punctuation
+        ✓ Vietnamese diacritics by default
     
     Normalization Pipeline:
         1. Remove special Unicode symbols
@@ -101,33 +113,61 @@ class TextNormalizer:
         6. Final cleanup
     
     Examples:
-        # Normal mode (preserve structure)
-        "Test™, TP.HCM/Q.1!" → "test, tp.hcm/q.1"
+        # Default Vietnamese normalization
+        normalizer = TextNormalizer()
+        normalizer.normalize("TP.HCM")  # → "tp.hcm"
         
-        # Aggressive mode (clean for matching)
-        "Test™, TP.HCM/Q.1" → "test tp hcm q 1"
+        # Custom language
+        spanish = TextNormalizer(char_map={'ñ': 'n', 'á': 'a'})
+        spanish.normalize("España")  # → "espana"
+        
+        # Domain-agnostic (no diacritics)
+        generic = TextNormalizer(char_map={})
+        generic.normalize("Hello")  # → "hello"
     """
     
     def __init__(
         self, 
         char_map: Optional[Dict[str, str]] = None,
-        meaningful_punct: Optional[Set[str]] = None
+        meaningful_punct: Optional[Set[str]] = None,
+        use_vietnamese_defaults: bool = True
     ):
         """
-        Initialize normalizer
+        Initialize normalizer with smart defaults
         
         Args:
-            char_map: Character replacement mapping (e.g., Vietnamese diacritics)
-                     If None, only lowercase/whitespace cleaning is performed
+            char_map: Character replacement mapping
+                     If None and use_vietnamese_defaults=True, uses VIETNAMESE_CHAR_MAP
+                     If None and use_vietnamese_defaults=False, no diacritic mapping
             meaningful_punct: Punctuation to preserve in normal mode
                             Default: {'.', ',', '/'}
+            use_vietnamese_defaults: If True, automatically uses Vietnamese character map
+                                    Set to False for domain-agnostic normalization
         
         Design rationale:
-            - char_map: Dependency injection for language flexibility
-            - meaningful_punct: Domain-specific punctuation rules
+            - Vietnamese by default (most common use case)
+            - Easy to disable for other languages
+            - Explicit control when needed
+        
+        Examples:
+            # Vietnamese (default)
+            TextNormalizer()  # Uses Vietnamese char map
+            
+            # Generic (no diacritics)
+            TextNormalizer(use_vietnamese_defaults=False)
+            
+            # Custom language
+            TextNormalizer(char_map={'ñ': 'n'}, use_vietnamese_defaults=False)
         """
-        self.char_map = char_map or {}
+        # Smart defaults for Vietnamese
+        if char_map is None and use_vietnamese_defaults:
+            self.char_map = VIETNAMESE_CHAR_MAP
+        else:
+            self.char_map = char_map or {}
+        
         self.meaningful_punct = meaningful_punct or MEANINGFUL_PUNCT.copy()
+        self.structural_punct = STRUCTURAL_PUNCT.copy()
+        self.word_separators = WORD_SEPARATORS.copy()
         
         # Pre-compute noise punctuation for efficiency
         self.noise_punct = set(string.punctuation) - self.meaningful_punct
@@ -315,19 +355,21 @@ class TextNormalizer:
         Two modes:
         
         Normal mode (aggressive=False):
+            - Replace word separators with spaces (preserve word boundaries)
             - Remove noise punctuation (!, ?, ;, :, etc.)
-            - Preserve meaningful punctuation (., comma, /)
+            - Preserve structural punctuation (., comma, /)
             Result: "tp.hcm, quan 1!" → "tp.hcm, quan 1"
         
         Aggressive mode (aggressive=True):
-            - Replace meaningful punctuation with SPACES
-            - Then remove all remaining punctuation
-            Result: "tp.hcm, quan 1" → "tp hcm  quan 1" → "tp hcm quan 1"
+            - Replace ALL meaningful punctuation with SPACES
+              (both structural and word separators)
+            - Then remove all remaining noise punctuation
+            Result: "tp.hcm, quan-1" → "tp hcm  quan 1" → "tp hcm quan 1"
         
-        Why replace with spaces in aggressive mode?
+        Why replace with spaces?
             Preserves word boundaries for downstream parsing:
             - "tp.hcm" → "tp hcm" (can detect "tp" prefix)
-            - NOT "tphcm" (looks like one word)
+            - "ng-t" → "ng t" (not "ngt")
         
         Args:
             text: Input text
@@ -337,20 +379,26 @@ class TextNormalizer:
             Text with punctuation handled
         """
         if aggressive:
-            # Step 1: Replace meaningful punctuation with spaces
+            # Replace ALL meaningful punctuation with spaces
+            # (structural + word separators)
             for punct in self.meaningful_punct:
                 text = text.replace(punct, ' ')
             
-            # Step 2: Remove ALL remaining punctuation
+            # Remove ALL remaining noise punctuation
             text = text.translate(str.maketrans('', '', string.punctuation))
         else:
-            # Normal mode:
-            # Step 1: Replace hyphens with spaces (they're word separators)
-            text = text.replace('-', ' ')
+            # Normal mode: Different treatment for different types
             
-            # Step 2: Remove only noise punctuation (excluding hyphen, already handled)
-            noise_without_hyphen = self.noise_punct - {'-'}
-            text = text.translate(str.maketrans('', '', ''.join(noise_without_hyphen)))
+            # Step 1: Replace word separators with spaces
+            for punct in self.word_separators:
+                text = text.replace(punct, ' ')
+            
+            # Step 2: Remove noise punctuation (excluding word separators)
+            noise_without_separators = self.noise_punct - self.word_separators
+            text = text.translate(str.maketrans('', '', ''.join(noise_without_separators)))
+            
+            # Step 3: Structural punctuation is automatically preserved
+            # (not replaced, not removed)
         
         return text
     
@@ -376,11 +424,8 @@ class TextNormalizer:
 # CONVENIENCE FUNCTIONS (Backward compatibility)
 # ========================================================================
 
-# Create default Vietnamese normalizer with new config
-_default_vietnamese_normalizer = TextNormalizer(
-    char_map=VIETNAMESE_CHAR_MAP,
-    meaningful_punct={'.', ',', '/'}
-)
+# Create default Vietnamese normalizer using smart defaults
+_default_vietnamese_normalizer = TextNormalizer()
 
 
 def normalize_text(text: str) -> str:
