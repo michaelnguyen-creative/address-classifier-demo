@@ -75,8 +75,9 @@ class PrefixExpander:
             (re.compile(r'\bquan\s+'), r'quan '),                     # Already correct
             
             # Huyện (rural district)
-            (re.compile(r'\bh\.?\s+(\d+)'), r'huyen \1'),           # H.1 → huyen 1
-            (re.compile(r'\bh\.?\s+([a-z]+)'), r'huyen \1'),         # H.X → huyen x
+            (re.compile(r'\bh\.\s*(\d+)'), r'huyen \1'),             # H.1 → huyen 1 (with dot)
+            (re.compile(r'\bh\.\s*([a-z]{3,})\b'), r'huyen \1'),    # H.X → huyen x (with dot)
+            (re.compile(r'\bh\s+([a-z]+)'), r'huyen \1'),            # h X → huyen x (with space)
             (re.compile(r'\bhuy\.?\s+([a-z]+)'), r'huyen \1'),       # Huy.X → huyen x
             (re.compile(r'\bhuyen\s+'), r'huyen '),                   # Already correct
             
@@ -97,7 +98,9 @@ class PrefixExpander:
             (re.compile(r'\bthanh\s+pho\s+'), r'thanh pho '),       # Already correct
             
             # Tỉnh (province)
-            (re.compile(r'\bt\.?\s+([a-z]{3,})'), r'tinh \1'),      # T.Name → tinh name (3+ chars to avoid "t giang")
+            # Only expand when there's explicit separation (space or dot)
+            (re.compile(r'\bt\.\s*([a-z]{3,})\b'), r'tinh \1'),    # T.Name → tinh name (with dot)
+            (re.compile(r'\bt\s+([a-z]{3,})\b'), r'tinh \1'),      # t name → tinh name (with space)
             (re.compile(r'\btinh\s+([a-z]+)'), r'tinh \1'),         # tinh X → tinh x
         ]
         
@@ -200,10 +203,19 @@ if __name__ == "__main__":
     
     # Test cases from real-world data
     test_cases = [
+        # Basic cases
         ("p1", "phuong 1", "Ward abbreviation"),
         ("q3", "quan 3", "District abbreviation"),
         ("tp hcm", "thanh pho hcm", "Province abbreviation"),
         ("h yen son", "huyen yen son", "District with name"),
+        
+        # Dotted forms (with explicit separator)
+        ("t.binh duong", "tinh binh duong", "Province with dot (t.)"),
+        ("h.hoai an", "huyen hoai an", "District with dot (h.)"),
+        ("t ha tinh", "tinh ha tinh", "Province with space (t )"),
+        ("h yen son", "huyen yen son", "District with space (h )"),
+        
+        # Complex cases
         ("p1 q3 tp hcm", "phuong 1 quan 3 thanh pho hcm", "Full address"),
         ("357 28 ng t thuat p1 q3 tp hochiminh", 
          "357 28 ng t thuat phuong 1 quan 3 thanh pho hochiminh",
@@ -211,6 +223,8 @@ if __name__ == "__main__":
         ("tt tan binh h yen son tinh tuyen quang",
          "thi tran tan binh huyen yen son tinh tuyen quang",
          "Rural address with town"),
+        
+        # Already expanded
         ("phuong 1 quan 3", "phuong 1 quan 3", "Already expanded (no change)"),
     ]
     

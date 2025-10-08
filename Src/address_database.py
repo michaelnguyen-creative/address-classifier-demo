@@ -16,9 +16,11 @@ import json
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
-# Import Trie and normalize_text from trie_parser module
+# Import Trie from trie_parser module
 from trie_parser import Trie
-from archive.normalizer import NormalizationConfig, normalize_text
+
+# REFACTORED: Use new normalizer_v2 instead of archive.normalizer
+from text_normalizer import TextNormalizer
 
 
 # ========================================================================
@@ -71,8 +73,22 @@ class AddressDatabase:
         # Step 3: Build hierarchy maps (code → parent_code)
         self._build_hierarchy_maps()
         
-        self.norm_config = NormalizationConfig(self.provinces)
-        print(f"✓ Generated {len(self.norm_config.province_abbreviations)} abbreviations")
+        # REFACTORED: Create TextNormalizer (uses Vietnamese defaults)
+        # This will be used for all text normalization in AGGRESSIVE mode
+        self.normalizer = TextNormalizer()
+        print(f"✓ Normalizer initialized (Vietnamese, aggressive mode for aliases)")
+
+        # NEW: Create AdminPrefixHandler for prefix detection & removal
+        # This handles all the pattern matching for administrative prefixes
+        from admin_prefix_handler import AdminPrefixHandler
+        self.admin_handler = AdminPrefixHandler(data_dir=data_dir)
+        print(f"✓ AdminPrefixHandler initialized (prefix detection & removal)")
+        
+        # NEW: Create PrefixRouter that uses AdminPrefixHandler
+        # Router reuses handler's patterns to determine which Trie to search
+        from prefix_router import PrefixRouter
+        self.prefix_router = PrefixRouter(self.admin_handler)
+        print(f"✓ PrefixRouter initialized (intelligent Trie routing)")
 
         # Step 4: Build Tries for fast matching
         self._build_tries()
@@ -212,14 +228,15 @@ class AddressDatabase:
         """
         from alias_generator import generate_aliases
         
-        print("Building Tries with alias support...")
+        print("Building Tries with alias support (aggressive normalization)...")
         
         # Province Trie
         self.province_trie = Trie()
         province_alias_count = 0
         for p in self.provinces:
             name = p['Name']
-            aliases = generate_aliases(name, self.norm_config)
+            # REFACTORED: Pass normalizer instance (uses aggressive mode internally)
+            aliases = generate_aliases(name, self.normalizer)
             
             # Insert all aliases pointing to original name
             for alias in aliases:
@@ -234,7 +251,8 @@ class AddressDatabase:
         district_alias_count = 0
         for d in self.districts:
             name = d['Name'].strip()
-            aliases = generate_aliases(name, self.norm_config)
+            # REFACTORED: Pass normalizer instance
+            aliases = generate_aliases(name, self.normalizer)
             
             for alias in aliases:
                 self.district_trie.insert(alias, name)
@@ -248,7 +266,8 @@ class AddressDatabase:
         ward_alias_count = 0
         for w in self.wards:
             name = w['Name'].strip()
-            aliases = generate_aliases(name, self.norm_config)
+            # REFACTORED: Pass normalizer instance
+            aliases = generate_aliases(name, self.normalizer)
             
             for alias in aliases:
                 self.ward_trie.insert(alias, name)
@@ -264,24 +283,26 @@ class AddressDatabase:
         Why: LCS needs token sequences, not raw strings
         Cost: O(total_entities) one-time preprocessing
         Benefit: O(1) lookup during parsing
+        
+        REFACTORED: Uses aggressive normalization for consistency
         """
-        print("Building LCS candidate lists...")
+        print("Building LCS candidate lists (aggressive normalization)...")
 
         # Province candidates: List[(name, tokens)]
         self.province_candidates = [
-            (name, normalize_text(name, self.norm_config).split())
+            (name, self.normalizer.normalize(name, aggressive=True).split())
             for name in self.province_name_to_code.keys()
         ]
 
         # District candidates: List[(name, tokens)]
         self.district_candidates = [
-            (name, normalize_text(name, self.norm_config).split())
+            (name, self.normalizer.normalize(name, aggressive=True).split())
             for name in self.district_name_to_codes.keys()
         ]
 
         # Ward candidates: List[(name, tokens)]
         self.ward_candidates = [
-            (name, normalize_text(name, self.norm_config).split())
+            (name, self.normalizer.normalize(name, aggressive=True).split())
             for name in self.ward_name_to_codes.keys()
         ]
 
@@ -362,6 +383,108 @@ class AddressDatabase:
                 return district_code
         
         return None
+    
+    # ====================================================================
+    # SMART SEARCH METHODS (with prefix routing)
+    # ====================================================================
+    
+    def search_province(self, query: str) -> Optional[str]:
+        """
+        Search for province using intelligent prefix routing
+        
+        Strategy:
+            1. Normalize query
+            2. Use PrefixRouter to detect level and extract core name
+            3. If prefix detected and level=province, search province_trie directly
+            4. Otherwise, try direct search as fallback
+        
+        Args:
+            query: User input (e.g., "TP.HCM", "T Hà Nội", "Hồ Chí Minh")
+        
+        Returns:
+            Matched province name or None
+        
+        Examples:
+            search_province("tp.hcm") → "Hồ Chí Minh" (via routing)
+            search_province("t ha noi") → "Hà Nội" (via routing)
+            search_province("hcm") → "Hồ Chí Minh" (direct alias)
+        """
+        if not query:
+            return None
+        
+        # Step 1: Normalize
+        normalized = self.normalizer.normalize(query, aggressive=True)
+        
+        # Step 2: Try prefix routing (FAST PATH)
+        level, core_name = self.prefix_router.detect_level(normalized)
+        
+        if level == 'province':
+            # Router detected province-level prefix
+            result = self.province_trie.search(core_name)
+            if result:
+                return result
+        
+        # Step 3: Fallback - direct search (no prefix detected)
+        # This handles aliases and full names without prefixes
+        result = self.province_trie.search(normalized)
+        return result
+    
+    def search_district(self, query: str) -> Optional[str]:
+        """
+        Search for district using intelligent prefix routing
+        
+        Similar to search_province() but for district level
+        Handles: "Q.1", "H. Củ Chi", "Quận 3", "Tân Bình"
+        
+        Returns:
+            Matched district name or None
+        """
+        if not query:
+            return None
+        
+        normalized = self.normalizer.normalize(query, aggressive=True)
+        
+        # Try prefix routing
+        level, core_name = self.prefix_router.detect_level(normalized)
+        
+        if level == 'district':
+            result = self.district_trie.search(core_name)
+            if result:
+                return result
+        
+        # Fallback - direct search
+        result = self.district_trie.search(normalized)
+        return result
+    
+    def search_ward(self, query: str) -> Optional[str]:
+        """
+        Search for ward using intelligent prefix routing
+        
+        KEY FEATURE: Properly handles "TT Tân Bình" (Thị trấn)
+        
+        Similar to search_province() but for ward level
+        Handles: "P.1", "TT Tân Bình", "Xã Phú Bình", "Bến Nghé"
+        
+        Returns:
+            Matched ward name or None
+        """
+        if not query:
+            return None
+        
+        normalized = self.normalizer.normalize(query, aggressive=True)
+        
+        # Try prefix routing (THIS IS THE KEY FIX!)
+        level, core_name = self.prefix_router.detect_level(normalized)
+        
+        if level == 'ward':
+            # Router detected ward-level prefix (TT, P, X, etc.)
+            result = self.ward_trie.search(core_name)
+            if result:
+                return result
+        
+        # Fallback - direct search
+        result = self.ward_trie.search(normalized)
+        return result
     
     # ====================================================================
     # VALIDATION METHODS
@@ -459,21 +582,54 @@ if __name__ == "__main__":
     db = AddressDatabase(data_dir="../Data")
     
     print("\n" + "="*70)
-    print("TESTING TRIE LOOKUPS")
+    print("TESTING SMART SEARCH WITH PREFIX EXPANSION")
     print("="*70)
     
-    # Test Trie lookups
-    test_lookups = [
-        ("ha noi", "province"),
-        ("nam tu liem", "district"),
-        ("cau dien", "ward"),
-        ("tan binh", "district"),  # duplicate name!
+    # Test new smart search methods
+    province_tests = [
+        ("ha noi", "Direct match"),
+        ("hcm", "Alias match"),
+        ("tp.hcm", "Prefix expansion"),
+        ("TP HCM", "Case + prefix"),
+        ("thanh pho ho chi minh", "Full form with prefix"),
+        ("dn", "Ambiguous abbreviation"),
     ]
     
-    for normalized_name, entity_type in test_lookups:
-        trie = getattr(db, f"{entity_type}_trie")
-        result = trie.search(normalized_name)
-        print(f"{entity_type.capitalize()}: '{normalized_name}' → {result}")
+    print("\nPROVINCE SEARCHES:")
+    print("-"*70)
+    for query, description in province_tests:
+        result = db.search_province(query)
+        status = "✅" if result else "❌"
+        print(f"{status} '{query:30}' → {result:20} ({description})")
+    
+    district_tests = [
+        ("nam tu liem", "Direct match"),
+        ("q.1", "Prefix abbreviation"),
+        ("q1", "Compact abbreviation"),
+        ("quan 3", "Full form"),
+        ("tan binh", "Duplicate name"),
+    ]
+    
+    print("\nDISTRICT SEARCHES:")
+    print("-"*70)
+    for query, description in district_tests:
+        result = db.search_district(query)
+        status = "✅" if result else "❌"
+        print(f"{status} '{query:30}' → {result:20} ({description})")
+    
+    ward_tests = [
+        ("cau dien", "Direct match"),
+        ("p.1", "Prefix abbreviation"),
+        ("p1", "Compact abbreviation"),
+        ("phuong 12", "Full form"),
+    ]
+    
+    print("\nWARD SEARCHES:")
+    print("-"*70)
+    for query, description in ward_tests:
+        result = db.search_ward(query)
+        status = "✅" if result else "❌"
+        print(f"{status} '{query:30}' → {result:20} ({description})")
     
     print("\n" + "="*70)
     print("TESTING HIERARCHY VALIDATION")

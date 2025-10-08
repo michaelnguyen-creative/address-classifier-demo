@@ -6,7 +6,7 @@ import json
 import time
 import statistics
 from pathlib import Path
-from address_parser_v3 import AddressParser
+from address_parser import AddressParser
 from typing import Dict, List, Optional
 
 
@@ -148,7 +148,7 @@ def run_tests(test_file: str, data_dir: str = "../Data"):
         
         # Parse with timing
         parse_start = time.perf_counter()
-        parsed = parser.parse(input_text, debug=False)
+        parsed = parser.parse(input_text, debug=True)
         parse_end = time.perf_counter()
         parse_duration = parse_end - parse_start
         perf.record_parse(parse_duration)
@@ -270,10 +270,10 @@ def run_tests(test_file: str, data_dir: str = "../Data"):
     # Show first 10 failures
     if results['failures']:
         print(f"\n" + "="*70)
-        print(f"SAMPLE FAILURES (first 100 of {len(results['failures'])})")
+        print(f"SAMPLE FAILURES (first 10 of {len(results['failures'])})")
         print("="*70)
         
-        for failure in results['failures'][:100]:
+        for failure in results['failures'][:10]:
             print(f"\n[{failure['index']}] Input: {failure['input']}")
             print(f"  Expected: P={failure['expected'].get('province')}, "
                   f"D={failure['expected'].get('district')}, "

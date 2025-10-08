@@ -2,26 +2,32 @@
 Address Parser - Multi-Tier Matching System
 
 Architecture:
-    Tier 1: Trie Exact Match    O(m)      ~80% cases
-    Tier 2: LCS Alignment       O(n×m)    ~15% cases
-    Tier 3: Edit Distance       O(k×m)    ~5% cases (future)
+    Tier 1: Trie Exact Match    O(m)
+    Tier 2: LCS Alignment       O(n×m)
+    Tier 3: Edit Distance       O(k×m)
 
 Algorithm:
 - Try Trie first (fast path)
 - Fallback to LCS if Trie fails
+- Fallback to Edit Distance (handles typos, OCR errors)
 - Validate hierarchy at each level
 - Return best result with confidence score
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
 # Import from our modules
 from address_database import AddressDatabase
-from normalizer_enhanced import normalize_text_enhanced
+
+# REFACTORED: No need to import normalize_text separately
+# We'll use the normalizer from the database instance
+
+# NEW: Import prefix expander for abbreviation handling
+from prefix_expander import PrefixExpander
 
 from lcs_matcher import LCSMatcher  # NEW import
-
+from edit_distance_matcher import EditDistanceMatcher 
 
 @dataclass
 class ParsedAddress:
@@ -67,10 +73,13 @@ class AddressParser:
         # Build database (includes Tries)
         self.db = AddressDatabase(data_dir=data_dir)
 
+        # NEW: Initialize prefix expander for user input
+        self.prefix_expander = PrefixExpander()
+
         # NEW: Initialize LCS matcher
         self.lcs_matcher = LCSMatcher(threshold=0.4)
         
-        print("✓ Parser ready (Trie + LCS + validation)")
+        print("✓ Parser ready (Trie + LCS + prefix expansion + validation)")
     
     # ========================================================================
     # MAIN PARSING INTERFACE
@@ -96,13 +105,22 @@ class AddressParser:
         if not text or not text.strip():
             return ParsedAddress()
         
-        normalized = normalize_text_enhanced(text, self.db.norm_config)
-        input_tokens = normalized.split()
+        # REFACTORED: Use aggressive normalization for consistency with database
+        # This ensures input matches the aliases stored in the trie
+        normalized = self.db.normalizer.normalize(text, aggressive=True)
+        
+        # NEW: Expand admin prefixes (p1 → phuong 1, q3 → quan 3, etc.)
+        # This allows user abbreviations to match database aliases
+        expanded = self.prefix_expander.expand(normalized)
+        
+        input_tokens = expanded.split()
         
         if debug:
             print(f"\n{'='*70}")
             print(f"PARSING: {text}")
             print(f"Normalized: {normalized}")
+            if expanded != normalized:
+                print(f"Expanded:   {expanded} (prefixes expanded)")
             print(f"Tokens: {input_tokens}")
             print(f"{'='*70}")
         
@@ -110,7 +128,7 @@ class AddressParser:
         if debug:
             print("\n[TIER 1] Trying Trie exact match...")
         
-        trie_result = self._try_trie_match(normalized, debug)
+        trie_result = self._try_trie_match(expanded, debug)
         
         if self._is_valid_result(trie_result, debug):
             if debug:
@@ -265,6 +283,8 @@ class AddressParser:
         """
         Try Trie exact matching with hierarchical masking
         
+        UPDATED: Now receives expanded text (with prefixes expanded)
+        
         Strategy:
         1. Match province first
         2. Mask province tokens, then match district
@@ -275,7 +295,7 @@ class AddressParser:
         matched as both province AND district.
         
         Args:
-            normalized_text: Normalized input text
+            normalized_text: Normalized AND expanded input text
             debug: Print debug info
         
         Returns:

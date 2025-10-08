@@ -8,10 +8,12 @@ Generates normalized variants of entity names for matching:
 - Dotted initials: "h.c.m"
 - First + last: "ho minh"
 - First initial + rest: "h. chi minh"
+
+REFACTORED: Now uses normalizer_v2 with aggressive mode for consistency
 """
 
 from typing import List, Set
-from archive.normalizer import normalize_text, NormalizationConfig
+from text_normalizer import TextNormalizer
 
 
 # ========================================================================
@@ -20,57 +22,78 @@ from archive.normalizer import normalize_text, NormalizationConfig
 
 def generate_aliases(
     original_name: str,
-    config: NormalizationConfig
+    normalizer: TextNormalizer
 ) -> Set[str]:
     """
     Generate all matching variants for an entity name
     
+    DESIGN DECISION: Uses AGGRESSIVE normalization mode
+    
+    Why aggressive?
+    - Removes ALL punctuation (dots, commas, slashes)
+    - Produces clean tokens for alias generation
+    - Ensures consistency with parser (which also uses aggressive)
+    - Example: "TP.HCM" → "tp hcm" (not "tp.hcm")
+    
     Args:
         original_name: Original entity name from database (e.g., "Hồ Chí Minh")
-        config: NormalizationConfig for proper normalization
+        normalizer: TextNormalizer instance (from normalizer_v2)
     
     Returns:
         Set of normalized alias strings (deduplicated)
     
     Algorithm:
-        1. Normalize the name (normalize_text already strips admin prefixes!)
-        2. Generate 6 types of variants from the normalized base
+        1. Normalize with AGGRESSIVE mode (strips punctuation → spaces)
+        2. Generate 6 types of variants from clean tokens
         3. Deduplicate using set
     
     Examples:
-        "Thành phố Hồ Chí Minh" → {
-            "ho chi minh",      # normalized (admin prefix already stripped)
+        "Hồ Chí Minh" → {
+            "ho chi minh",      # full normalized
             "hochiminh",        # no spaces
             "hcm",              # initials
             "h.c.m",            # dotted initials
-            "ho minh",          # first + last
-            "h. chi minh"       # first initial + rest
-            "h chi minh",       # first initial + rest (implicit)
-            "hchiminh"       # no spaces + first initial + rest (implicit)
+            "ho minh",          # first + last (3+ tokens)
+            "h. chi minh",      # first initial + rest (dotted)
+            "h chi minh"        # first initial + rest (no dot)
         }
         
-        "Quận Bình Thạnh" → {
-            "binh thanh",       # normalized
-            "binhthanh",        # no spaces
-            "bt",               # initials
-            "b.t",              # dotted initials
-            "b. thanh"          # first initial + rest
-            "b thanh",          # first initial + rest (implicit)
-            "bthanh"          # no spaces + first initial + rest (implicit)
+        "Thành phố Hồ Chí Minh" → {
+            "thanh pho ho chi minh",  # full (no prefix stripping here!)
+            "thanhphohochiminh",
+            "tphcm",
+            "t.p.h.c.m",
+            "thanh minh",             # first + last
+            "t. pho ho chi minh"
+        }
+        
+        NOTE: Admin prefix stripping (if needed) should happen BEFORE 
+        calling this function. This function just generates aliases from 
+        whatever normalized text it receives.
+        
+        "Quận 1" → {
+            "quan 1",           # full normalized
+            "quan1",            # no space
+            "q1",               # initials
+            "q.1"               # dotted
         }
         
         "Phường 1" → {
-            "1"                 # just the number (single token)
+            "phuong 1",
+            "phuong1", 
+            "p1",
+            "p.1"
         }
     
     Time: O(n) where n = len(original_name)
     """
     aliases = set()
     
-    # Step 1: Normalize (this already strips admin prefixes!)
-    base_name = normalize_text(original_name, config)
+    # Step 1: Normalize with AGGRESSIVE mode
+    # This removes diacritics, lowercases, and converts punctuation → spaces
+    base_name = normalizer.normalize(original_name, aggressive=True)
     
-    # Step 2: Tokenize
+    # Step 2: Tokenize (aggressive mode already gives us clean tokens)
     tokens = base_name.split()
     num_tokens = len(tokens)
     
@@ -102,17 +125,13 @@ def generate_aliases(
         first_last = f"{tokens[0]} {tokens[-1]}"
         aliases.add(first_last)
     
-    # --- Variant 6: First initial + rest ---
+    # --- Variant 6: First initial + rest (with dot) ---
     first_initial_rest = f"{tokens[0][0]}. {' '.join(tokens[1:])}"
     aliases.add(first_initial_rest)
 
-    # --- Implicit Variant: First initial + rest (no dot) ---
+    # --- Variant 7: First initial + rest (no dot) ---
     first_initial_rest_no_dot = f"{tokens[0][0]} {' '.join(tokens[1:])}"
     aliases.add(first_initial_rest_no_dot)
-    
-    # --- Implicit Variant: No-space + First initial + rest ---
-    no_space_first_initial_rest = f"{tokens[0][0]}{''.join(tokens[1:])}"
-    aliases.add(no_space_first_initial_rest)
     
     return aliases
 
@@ -123,14 +142,14 @@ def generate_aliases(
 
 def generate_aliases_batch(
     entity_names: List[str],
-    config: NormalizationConfig
+    normalizer: TextNormalizer
 ) -> List[tuple]:
     """
     Generate aliases for a batch of entities
     
     Args:
         entity_names: List of original entity names
-        config: NormalizationConfig instance
+        normalizer: TextNormalizer instance
     
     Returns:
         List of (original_name, set_of_aliases) tuples
@@ -140,7 +159,7 @@ def generate_aliases_batch(
     results = []
     
     for name in entity_names:
-        aliases = generate_aliases(name, config)
+        aliases = generate_aliases(name, normalizer)
         results.append((name, aliases))
     
     return results
@@ -151,30 +170,37 @@ def generate_aliases_batch(
 # ========================================================================
 
 if __name__ == "__main__":
-    from archive.normalizer import NormalizationConfig
+    from text_normalizer import TextNormalizer
     
-    # Mock config for testing
-    sample_provinces = [{'Name': 'Hồ Chí Minh'}, {'Name': 'Hà Nội'}]
-    config = NormalizationConfig(sample_provinces)
+    # Create normalizer (uses Vietnamese defaults)
+    normalizer = TextNormalizer()
     
     print("="*70)
-    print("ALIAS GENERATOR TESTS")
+    print("ALIAS GENERATOR TESTS (REFACTORED VERSION)")
     print("="*70)
     
-    # First, let's debug normalize_text to see what it produces
-    print("\nDEBUG: Testing normalize_text directly:")
+    # First, test normalization behavior
+    print("\n" + "="*70)
+    print("STEP 1: Testing aggressive normalization")
+    print("="*70)
+    
     test_norm = [
         "Hồ Chí Minh",
         "Thành phố Hồ Chí Minh",
+        "TP.HCM",
         "Quận Bình Thạnh",
+        "Q.1",
         "Phường 1",
+        "P.Bến Nghé"
     ]
-    for name in test_norm:
-        normalized = normalize_text(name, config)
-        print(f"  '{name}' → '{normalized}'")
     
+    for name in test_norm:
+        normalized = normalizer.normalize(name, aggressive=True)
+        print(f"  '{name:30}' → '{normalized}'")
+    
+    # Now test alias generation
     print("\n" + "="*70)
-    print("ALIAS GENERATION:")
+    print("STEP 2: Alias generation from aggressive-normalized base")
     print("="*70)
     
     test_cases = [
@@ -184,32 +210,45 @@ if __name__ == "__main__":
         "Hà Nội",
         "Đà Nẵng",
         "Cần Thơ",
-        "Huế",
-        "Thừa Thiên Huế",
+        
+        # Abbreviated forms (test how aggressive handles these)
+        "TP.HCM",
+        "TP HCM",
         
         # District names
         "Quận Bình Thạnh",
         "Quận 1",
-        "Quận 10",
-        "Huyện Nam Từ Liêm",
+        "Q.1",
         "Huyện Củ Chi",
-        "Huyện Nhà Bè",
         
         # Ward names
         "Phường 1",
+        "P.1",
         "Phường Bến Nghé",
-        "Phường Đa Kao",
         "Xã Tân Thông Hội",
-        "Thị trấn Tân Phú",
         
         # Edge cases
-        "Thị Xã Thủ Dầu Một",  # multi-word with admin prefix
-        "Thành phố Thủ Đức",   # Đ character
-        "Phường Thảo Điền",    # Đ in middle
+        "Thị Xã Thủ Dầu Một",
+        "Thành phố Thủ Đức",
     ]
     
     for name in test_cases:
-        aliases = generate_aliases(name, config)
+        aliases = generate_aliases(name, normalizer)
         print(f"\n'{name}':")
         for alias in sorted(aliases):
-            print(f"  - {alias}")
+            print(f"  - '{alias}'")
+    
+    print("\n" + "="*70)
+    print("KEY OBSERVATIONS:")
+    print("="*70)
+    print("""
+1. ✓ All aliases use aggressive normalization (no dots in base form)
+2. ✓ "TP.HCM" → "tp hcm" → generates {"tp hcm", "tphcm", "th", ...}
+3. ✓ "Hồ Chí Minh" → "ho chi minh" → generates {"hcm", "hochiminh", ...}
+4. ✓ Consistent tokenization (spaces separate words)
+5. ✓ Parser must also use aggressive mode to match these aliases!
+
+IMPORTANT: If the database needs to strip admin prefixes (like "thanh pho"),
+that should happen BEFORE calling generate_aliases(). This function just
+creates variants of whatever normalized text it receives.
+    """)

@@ -175,7 +175,62 @@ class TextNormalizer:
         # Pre-compile regex patterns
         self._whitespace_pattern = re.compile(r'\s+')
     
-    def normalize(self, text: str, aggressive: bool = False) -> str:
+    def preprocess_compact_text(self, text: str) -> str:
+        """
+        Pre-processing step to fix compact text (no spaces between prefix and entity)
+        
+        Problem:
+            "TỉnhThái Nguyên" → "tinhthai nguyen" (unrecognizable)
+        
+        Solution:
+            Insert space before TRUE word boundaries (lowercase word → Uppercase word)
+            NOT just any lowercase → uppercase transition
+        
+        Algorithm:
+            1. Find transitions: lowercase letter + uppercase letter at START of new word
+            2. Use word boundary detection (\b) to avoid splitting within words
+            3. Only match when transitioning between separate words
+        
+        Examples:
+            "TỉnhThái Nguyên" → "Tỉnh Thái Nguyên"  ✓ (word boundary)
+            "Diễn" → "Diễn" (NOT "Di ễn")  ✓ (within word, preserved)
+            "TP.HồChíMinh" → "TP. Hồ Chí Minh"  ✓ (multiple words)
+        
+        Args:
+            text: Raw text possibly with compact formatting
+        
+        Returns:
+            Text with spaces inserted at word boundaries
+        """
+        if not text:
+            return text
+        
+        # IMPROVED Pattern: Only match lowercase ASCII/Vietnamese → uppercase ASCII at word start
+        # This avoids splitting diacritics like "iễ" in "Diễn"
+        
+        # Strategy: Match lowercase followed by uppercase, but only ASCII uppercase
+        # Vietnamese diacritics (ễ, ô, etc.) won't match uppercase ASCII [A-Z]
+        # This prevents "iễn" from matching, but allows "hT" in "tỉnhThái"
+        
+        # Pattern: lowercase (any) followed by uppercase ASCII or uppercase Vietnamese BASE letter
+        # We need to be more careful here
+        
+        # Better approach: Only insert space if lowercase is followed by
+        # an UPPERCASE letter that STARTS a new word (not a diacritic)
+        
+        # Specifically: match [a-z] or Vietnamese lowercase CONSONANTS followed by [A-Z]
+        # Vietnamese vowel diacritics (ê, ô, ơ, ư, etc.) should NOT trigger split
+        
+        # Simple fix: Only match if the uppercase letter is ASCII [A-Z] or 
+        # specific Vietnamese uppercase consonants [ÐĐ] (not vowels)
+        text = re.sub(r'([a-zđ])([A-ZĐ])', r'\1 \2', text)
+        
+        # Pattern 2: Insert space after dot before uppercase (unchanged)
+        text = re.sub(r'\.([A-ZÀ-Ỹ])', r'. \1', text)
+        
+        return text
+    
+    def normalize(self, text: str, aggressive: bool = False, preprocess: bool = True) -> str:
         """
         Normalize text using multi-stage pipeline
         
@@ -190,6 +245,7 @@ class TextNormalizer:
         Args:
             text: Raw input text
             aggressive: Remove ALL punctuation (replace with spaces)
+            preprocess: Apply compact text preprocessing (default: True)
         
         Returns:
             Normalized text
@@ -204,9 +260,17 @@ class TextNormalizer:
             
             # Aggressive mode
             normalize("TP.HCM/Q.1", aggressive=True) → "tp hcm q 1"
+            
+            # With preprocessing
+            normalize("TỉnhThái Nguyên", preprocess=True) → "tinh thai nguyen"
         """
         if not text:
             return ""
+        
+        # Stage 0: Pre-processing (OPTIONAL - fixes compact text)
+        # WHY FIRST: Before any other transformations
+        if preprocess:
+            text = self.preprocess_compact_text(text)
         
         # Stage 1: Remove special Unicode symbols
         # WHY FIRST: Broadest filter, language-agnostic

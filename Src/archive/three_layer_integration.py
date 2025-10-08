@@ -10,7 +10,7 @@ ARCHITECTURE:
     Layer 3: Alias generation (alias_generator.py)
 """
 
-from archive.normalizer_v2 import normalize_text
+from normalizer_v2 import normalize_text
 from admin_prefix_handler import AdminPrefixHandler
 from alias_generator import generate_aliases
 from typing import List, Set, Tuple
